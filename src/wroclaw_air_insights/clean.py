@@ -69,16 +69,27 @@ def interpolate_short_gaps(
     return out
 
 
-def clean_pm25(df: pd.DataFrame, column: str = "value") -> pd.DataFrame:
-    """Full cleaning pipeline for a PM2.5 series.
+def clean_series(
+    df: pd.DataFrame,
+    column: str = "value",
+    value_range: tuple[float, float] | None = None,
+) -> pd.DataFrame:
+    """Full cleaning pipeline for a pollutant series.
 
-    dedupe → mask implausible values → hourly grid (expose gaps) → interpolate short
-    gaps. The result is an hourly frame; remaining NaNs are genuine longer outages.
+    dedupe → mask implausible values (outside ``value_range``) → hourly grid (expose
+    gaps) → interpolate short gaps. The result is an hourly frame; remaining NaNs are
+    genuine longer outages. ``value_range`` defaults to the PM2.5 range.
     """
+    low, high = value_range if value_range is not None else (PM25_MIN, PM25_MAX)
     step = drop_duplicate_hours(df)
-    step = mask_out_of_range(step, column=column)
+    step = mask_out_of_range(step, column=column, low=low, high=high)
     step = to_hourly_grid(step, column=column)
     return interpolate_short_gaps(step, column=column)
+
+
+def clean_pm25(df: pd.DataFrame, column: str = "value") -> pd.DataFrame:
+    """Backwards-compatible PM2.5 cleaning (thin wrapper over clean_series)."""
+    return clean_series(df, column=column, value_range=(PM25_MIN, PM25_MAX))
 
 
 def missing_summary(df: pd.DataFrame, column: str = "value") -> dict[str, float]:

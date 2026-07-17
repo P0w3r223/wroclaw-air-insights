@@ -21,6 +21,7 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 DB_PATH = DATA_DIR / "air_quality.db"
 FIGURES_DIR = PROJECT_ROOT / "reports" / "figures"
+MODELS_DIR = PROJECT_ROOT / "models"
 
 # --- Location (Wrocław) ------------------------------------------------------
 WROCLAW_LAT = 51.11
@@ -59,17 +60,47 @@ STATIONS: tuple[Station, ...] = (
 # Station whose automatic hourly sensor is the live PM2.5 target for the forecast.
 PRIMARY_STATION_ID = 129
 
-# Pollutant code as it appears in the GIOŚ "Wskaźnik - kod" field.
-PM25_CODE = "PM2.5"
+# --- Pollutants --------------------------------------------------------------
+# GIOŚ codes ("Wskaźnik - kod") for the criteria pollutants we care about.
+# Ingestion pulls whichever of these a station actually measures
+# (see ingest.gios.get_sensor_map).
+POLLUTANTS: tuple[str, ...] = ("PM2.5", "PM10", "NO2", "O3", "SO2", "CO")
+
+# The pollutant the 24h forecast targets.
+TARGET_POLLUTANT = "PM2.5"
+
+# Backwards-compatible alias.
+PM25_CODE = TARGET_POLLUTANT
+
+# Physically plausible value ranges (µg/m³) per pollutant, used by cleaning to drop
+# sensor errors. Anything not listed falls back to DEFAULT_VALUE_RANGE.
+DEFAULT_VALUE_RANGE = (0.0, 10000.0)
+POLLUTANT_RANGES: dict[str, tuple[float, float]] = {
+    "PM2.5": (0.0, 1000.0),
+    "PM10": (0.0, 2000.0),
+    "NO2": (0.0, 1000.0),
+    "O3": (0.0, 1000.0),
+    "SO2": (0.0, 1500.0),
+    "CO": (0.0, 50000.0),  # CO reported in µg/m³
+}
 
 # --- Norms / thresholds (µg/m³) ----------------------------------------------
-# Reference levels used for the exceedance analysis. WHO 2021 guidelines are the
-# strict health-based reference; the EU annual limit is the binding legal one.
-# PM2.5 has no Polish smog-alert level (those are defined for PM10), so exceedance
-# analysis references WHO/EU rather than a national alarm threshold.
-PM25_WHO_DAILY = 15.0  # WHO 2021, 24-hour mean guideline
-PM25_WHO_ANNUAL = 5.0  # WHO 2021, annual mean guideline
-PM25_EU_ANNUAL = 25.0  # EU annual limit value (Directive 2008/50/EC)
+# Reference levels for exceedance analysis. WHO 2021 guidelines are the strict
+# health-based reference; EU limits are the binding legal ones. Only documented
+# thresholds are listed per pollutant.
+POLLUTANT_NORMS: dict[str, dict[str, float]] = {
+    "PM2.5": {"who_daily": 15.0, "who_annual": 5.0, "eu_annual": 25.0},
+    "PM10": {"who_daily": 45.0, "who_annual": 15.0, "eu_daily": 50.0, "eu_annual": 40.0},
+    "NO2": {"who_annual": 10.0, "eu_annual": 40.0, "eu_hourly": 200.0},
+    "O3": {"who_8h": 100.0, "eu_8h": 120.0},
+    "SO2": {"who_daily": 40.0, "eu_hourly": 350.0},
+    "CO": {"eu_8h": 10000.0},
+}
+
+# Backwards-compatible PM2.5 aliases (used by the analysis notebook).
+PM25_WHO_DAILY = POLLUTANT_NORMS["PM2.5"]["who_daily"]
+PM25_WHO_ANNUAL = POLLUTANT_NORMS["PM2.5"]["who_annual"]
+PM25_EU_ANNUAL = POLLUTANT_NORMS["PM2.5"]["eu_annual"]
 
 # --- Weather features (Open-Meteo) -------------------------------------------
 # Train on Historical Forecast API and serve on Forecast API: both expose the same

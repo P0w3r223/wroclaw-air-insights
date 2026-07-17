@@ -44,3 +44,36 @@ def test_parse_hourly_maps_arrays_to_columns():
 
 def test_parse_hourly_empty_payload():
     assert weather.parse_hourly({}).empty
+
+
+AQINDEX_PAYLOAD = {
+    "AqIndex": {
+        "Identyfikator stacji pomiarowej": 129,
+        "Data wykonania obliczeń indeksu": "2026-07-17 12:20:35",
+        "Wartość indeksu": 1,
+        "Nazwa kategorii indeksu": "Dobry",
+        "Kod zanieczyszczenia krytycznego": "PM2.5",
+        "Wartość indeksu dla wskaźnika NO2": 0,
+        "Nazwa kategorii indeksu dla wskaźnika NO2": "Bardzo dobry",
+        "Wartość indeksu dla wskaźnika PM2.5": 1,
+        "Nazwa kategorii indeksu dla wskaźnika PM2.5": "Dobry",
+        "Wartość indeksu dla wskaźnika O3": None,
+        "Nazwa kategorii indeksu dla wskaźnika O3": None,
+    }
+}
+
+
+def test_parse_aqindex_extracts_overall_and_subindices():
+    result = gios.parse_aqindex(AQINDEX_PAYLOAD)
+    assert result["station_id"] == 129
+    assert result["overall"]["category"] == "Dobry"
+    assert result["critical_pollutant"] == "PM2.5"
+    assert result["pollutants"]["NO2"]["category"] == "Bardzo dobry"
+    assert result["pollutants"]["PM2.5"]["value"] == 1
+    assert "O3" not in result["pollutants"]  # pollutants with no data are skipped
+
+
+def test_parse_aqindex_empty_payload():
+    result = gios.parse_aqindex({})
+    assert result["overall"]["value"] is None
+    assert result["pollutants"] == {}
