@@ -13,19 +13,23 @@ piece that proves solid data work + a first, methodologically correct ML model.
 
 ```
 src/wroclaw_air_insights/
-  config.py          # single source of truth: stations, endpoints, norms, paths, features
+  config.py          # single source of truth: stations, pollutants, endpoints, norms, paths
   ingest/
-    gios.py          # GIOŚ API client (current + archival PM2.5); I/O split from parsing
+    gios.py          # GIOŚ client: multi-pollutant current/archival + air-quality index
     weather.py       # Open-Meteo client (forecast + historical); I/O split from parsing
-  db.py              # SQLite schema + read/write
+  db.py              # SQLite: measurements (station, pollutant, hour) + weather
   clean.py           # pure cleaning/validation functions (unit-tested)
   forecast/
-    features.py      # time + weather feature engineering, target shift (+24h)
+    features.py      # leakage-free features; build_features (train) + build_inference_features (serve)
     baseline.py      # naive baselines (persistence / seasonal)
-    model.py         # training with a TIME-BASED split, evaluation vs baseline
+    model.py         # time-based split, model comparison, rolling CV, joblib persistence
+    serving.py       # live next-24h forecast from the saved model
+  report.py          # self-contained HTML report for GitHub Pages
+  pipeline.py        # CLI: ingest / train / compare / predict / all
 notebooks/01_analysis.ipynb   # narrative EDA + figures
-tests/                # pytest — cleaning and feature logic
+tests/                # pytest — cleaning, parsing, db, forecast, save/load
 docs/research/        # data-source research + decisions
+.github/workflows/    # ci.yml (tests) + refresh.yml (daily Pages deploy)
 ```
 
 ## Methodology rules (do not violate)
@@ -56,6 +60,13 @@ docs/research/        # data-source research + decisions
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt   # Windows
 pytest                                                    # tests
+
+python -m wroclaw_air_insights.pipeline all --days 365    # ingest + train
+python -m wroclaw_air_insights.pipeline compare           # models vs baselines + CV
+python -m wroclaw_air_insights.pipeline predict           # live next-24h forecast
+python -m wroclaw_air_insights.report                     # build the Pages HTML report
 ```
 
 Interpreter used during development: `.venv/Scripts/python.exe` (Python 3.12).
+On Windows, run the pipeline with `PYTHONIOENCODING=utf-8` (or rely on the built-in
+`sys.stdout.reconfigure`) so µg/µm and Polish characters print.
