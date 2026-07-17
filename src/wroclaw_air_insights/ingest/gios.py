@@ -67,7 +67,12 @@ def _get(url: str, params: dict | None = None) -> dict:
                 f"GIOŚ {url} -> HTTP {response.status_code}: {response.text[:200]}"
             )
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise GiosApiError(
+                f"GIOŚ {url} -> non-JSON body on 200: {response.text[:200]}"
+            ) from exc
         if isinstance(payload, dict) and "error_code" in payload:
             raise GiosApiError(
                 f"GIOŚ {url} -> {payload.get('error_code')}: {payload.get('error_reason')}"

@@ -50,11 +50,20 @@ def _assemble(
     roll_window: int,
 ) -> pd.DataFrame:
     """Build the full feature matrix (target + features) WITHOUT dropping rows."""
+    # Outer join keeps every PM2.5 hour even where weather is missing, so the lag/rolling
+    # source series stays gapless; the reindex then guarantees a contiguous hourly index
+    # so shifts are by TIME, not by surviving-row position. Rows missing any feature are
+    # dropped later by build_features — but they still serve as correct lag sources.
     merged = (
-        pd.merge(pm25[["timestamp", "value"]], weather, on="timestamp", how="inner")
+        pd.merge(pm25[["timestamp", "value"]], weather, on="timestamp", how="outer")
         .sort_values("timestamp")
         .set_index("timestamp")
     )
+    if not merged.empty:
+        merged = merged.reindex(
+            pd.date_range(merged.index.min(), merged.index.max(), freq="h")
+        )
+    merged.index.name = "timestamp"
 
     frame = pd.DataFrame(index=merged.index)
     frame[TARGET_COLUMN] = merged["value"]

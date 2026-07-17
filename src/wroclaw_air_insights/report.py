@@ -11,6 +11,7 @@ import base64
 import io
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import matplotlib
 
@@ -71,7 +72,7 @@ def generate_report(
     colour = _AQI_COLORS.get(category, "#9e9e9e")
     chart_b64 = _forecast_chart(forecast_df)
     peak = forecast_df["predicted_pm25"].max()
-    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    generated = datetime.now(ZoneInfo(config.TIMEZONE)).strftime("%Y-%m-%d %H:%M %Z")
 
     html = f"""<!doctype html>
 <html lang="en">

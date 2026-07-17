@@ -16,7 +16,6 @@ dependencies = [
     "scikit-learn>=1.5,<2",
     "matplotlib>=3.9,<4",
     "seaborn>=0.13,<0.14",
-    "openpyxl>=3.1,<4",
     "joblib>=1.4,<2",
 ]
 
@@ -32,6 +31,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    # numpy 2.5 / pandas date_range interaction — third-party, not our code.
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
+]
 filterwarnings = [
     # Deprecation emitted by joblib's numpy pickling on NumPy 2.5 — third-party, not ours.
     "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
