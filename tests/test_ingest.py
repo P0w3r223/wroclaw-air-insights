@@ -1,8 +1,42 @@
-"""Tests for the pure parsing functions of the ingest clients (no network)."""
+"""Tests for the parsing functions and HTTP retry contract of the ingest clients."""
 
 import pandas as pd
+import pytest
 
 from wroclaw_air_insights.ingest import gios, weather
+
+
+class _Resp:
+    def __init__(self, status_code=200, payload=None, text="", raises=False):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+        self._raises = raises
+
+    def json(self):
+        if self._raises:
+            raise ValueError("no json")
+        return self._payload
+
+
+def test_gios_get_retries_5xx_then_raises(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_get(*args, **kwargs):
+        calls["n"] += 1
+        return _Resp(status_code=500, text="server error")
+
+    monkeypatch.setattr(gios.time, "sleep", lambda s: None)
+    monkeypatch.setattr(gios.requests, "get", fake_get)
+    with pytest.raises(gios.GiosApiError):
+        gios._get("http://example/test")
+    assert calls["n"] == gios._MAX_RETRIES  # retried every attempt before raising
+
+
+def test_gios_get_non_json_200_raises_typed_error(monkeypatch):
+    monkeypatch.setattr(gios.requests, "get", lambda *a, **k: _Resp(status_code=200, raises=True))
+    with pytest.raises(gios.GiosApiError):
+        gios._get("http://example/test")
 
 GIOS_PAYLOAD = {
     "@context": {"meta": "..."},

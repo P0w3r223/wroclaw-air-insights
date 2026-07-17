@@ -36,13 +36,15 @@ def test_to_hourly_grid_exposes_gaps():
     assert out["value"].isna().sum() == 2
 
 
-def test_interpolate_fills_short_gap_leaves_long_gap():
-    times = pd.date_range("2026-01-01", periods=9, freq="h")
-    values = [1.0, np.nan, np.nan, 4.0, np.nan, np.nan, np.nan, np.nan, np.nan]
+def test_interpolate_fills_short_gap_leaves_long_interior_gap():
+    times = pd.date_range("2026-01-01", periods=10, freq="h")
+    # a 2-hour gap (short) then a 4-hour INTERIOR gap with a value after it
+    values = [1.0, np.nan, np.nan, 4.0, np.nan, np.nan, np.nan, np.nan, 9.0, 10.0]
     df = pd.DataFrame({"timestamp": times, "value": values})
     out = clean.interpolate_short_gaps(df, max_gap=3)
     assert out["value"].iloc[1:3].notna().all()  # 2-hour gap filled
-    assert out["value"].iloc[4:9].isna().all()  # 5-hour gap left as NaN
+    # the whole 4-hour run stays NaN — we do NOT fill just its first 3 hours
+    assert out["value"].iloc[4:8].isna().all()
 
 
 def test_clean_pm25_end_to_end():
