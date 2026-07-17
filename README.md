@@ -28,6 +28,33 @@ SQL database, an insights report, and a **24-hour PM2.5 forecast**.
 See [`docs/research/data-sources.md`](docs/research/data-sources.md) for station ids,
 endpoint details, and the reasoning behind these choices.
 
+## Results
+
+Hourly PM2.5 shows the expected strong seasonality — low in summer, peaking in the
+winter heating season, when the WHO 24-hour guideline is regularly exceeded:
+
+![PM2.5 over time](reports/figures/fig1_timeseries.png)
+
+**24-hour forecast vs. baseline** (chronological test split, ~1 year of hourly data):
+
+| Metric | Model (random forest) | Baseline (persistence) |
+|--------|:---------------------:|:----------------------:|
+| MAE (µg/m³)  | **4.14** | 4.87 |
+| RMSE (µg/m³) | **5.40** | 6.41 |
+
+The model lowers MAE by **~15%** versus the naive baseline. Feature importances show it
+relies on recent PM2.5 (autocorrelation) plus dispersion drivers — boundary-layer
+height, wind, temperature — so it learns the physics rather than memorizing noise:
+
+![Feature importances](reports/figures/fig6_importances.png)
+
+The full narrative analysis — seasonality, norm exceedances, an hour × weekday heatmap,
+and weather correlations — is in
+[`notebooks/01_analysis.ipynb`](notebooks/01_analysis.ipynb).
+
+> Note: the test window falls in summer (low, stable PM2.5), so R² is modest even
+> though MAE clearly beats the baseline; see the notebook's *Limitations* section.
+
 ## Project structure
 
 ```
@@ -51,8 +78,16 @@ python -m venv .venv
 ## Usage
 
 ```bash
+# fetch ~1 year of PM2.5 + weather into SQLite, then train + evaluate
+python -m wroclaw_air_insights.pipeline all --days 365
+# or run the steps separately:
+python -m wroclaw_air_insights.pipeline ingest --days 365
+python -m wroclaw_air_insights.pipeline train
+
 pytest                      # run the test suite
-# pipeline / forecast entry points — see below (added as the project grows)
+
+# reproduce the analysis notebook (figures + outputs)
+jupyter nbconvert --to notebook --execute --inplace notebooks/01_analysis.ipynb
 ```
 
 ## Methodology highlights
