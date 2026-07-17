@@ -1,5 +1,7 @@
 # wroclaw-air-insights
 
+[![CI](https://github.com/P0w3r223/wroclaw-air-insights/actions/workflows/ci.yml/badge.svg)](https://github.com/P0w3r223/wroclaw-air-insights/actions/workflows/ci.yml)
+
 **Air quality analysis for Wrocław from open GIOŚ data** — an ingestion pipeline, a
 SQL database, an insights report, and a **24-hour PM2.5 forecast**.
 
