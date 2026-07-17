@@ -32,3 +32,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    # Deprecation emitted by joblib's numpy pickling on NumPy 2.5 — third-party, not ours.
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
+]

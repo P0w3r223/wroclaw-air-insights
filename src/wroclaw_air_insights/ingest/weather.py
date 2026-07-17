@@ -82,12 +82,19 @@ def _base_params(lat: float, lon: float, variables: Sequence[str]) -> dict:
 
 def fetch_forecast(
     forecast_days: int = 2,
+    past_days: int = 0,
     lat: float = config.WROCLAW_LAT,
     lon: float = config.WROCLAW_LON,
     variables: Sequence[str] = config.WEATHER_HOURLY_VARS,
 ) -> pd.DataFrame:
-    """Fetch hourly weather forecast (default 2 days — covers the 24h horizon)."""
+    """Fetch hourly weather forecast (default 2 days — covers the 24h horizon).
+
+    ``past_days`` prepends recent history from the same forecast model, so live
+    inference has a continuous weather series spanning the deepest PM2.5 lag.
+    """
     params = {**_base_params(lat, lon, variables), "forecast_days": forecast_days}
+    if past_days:
+        params["past_days"] = past_days
     return parse_hourly(_get(config.OPEN_METEO_FORECAST_URL, params))
 
 

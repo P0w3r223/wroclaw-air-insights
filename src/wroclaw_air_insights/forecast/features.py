@@ -11,8 +11,10 @@ so there is **no target leakage**:
   inference;
 - calendar features of ``T`` are deterministic.
 
-This is the crux of the project's methodology: a naive random split would let the
-model peek at the future. See CLAUDE.md.
+``_assemble`` builds the full matrix without dropping rows; :func:`build_features`
+keeps only complete rows for training, while :func:`build_inference_features` keeps
+the future rows (unknown target) for live prediction. This is the crux of the
+project's methodology — see CLAUDE.md.
 """
 
 from __future__ import annotations
@@ -40,19 +42,14 @@ def _add_calendar_features(frame: pd.DataFrame, index: pd.DatetimeIndex) -> pd.D
     return frame
 
 
-def build_features(
+def _assemble(
     pm25: pd.DataFrame,
     weather: pd.DataFrame,
-    horizon: int = config.FORECAST_HORIZON_HOURS,
-    lags: tuple[int, ...] = DEFAULT_LAGS_H,
-    roll_window: int = ROLL_WINDOW_H,
+    horizon: int,
+    lags: tuple[int, ...],
+    roll_window: int,
 ) -> pd.DataFrame:
-    """Build the modeling frame from a cleaned PM2.5 series and hourly weather.
-
-    Returns a frame with a ``timestamp`` column (valid time T), a ``target`` column
-    (PM2.5 at T), and feature columns. Rows with any missing feature/target are
-    dropped, so the result is ready for training.
-    """
+    """Build the full feature matrix (target + features) WITHOUT dropping rows."""
     merged = (
         pd.merge(pm25[["timestamp", "value"]], weather, on="timestamp", how="inner")
         .sort_values("timestamp")
@@ -69,12 +66,52 @@ def build_features(
     frame[f"pm25_roll{roll_window}_mean"] = origin_series.rolling(roll_window).mean()
     frame[f"pm25_roll{roll_window}_std"] = origin_series.rolling(roll_window).std()
 
-    weather_cols = [c for c in weather.columns if c != "timestamp"]
-    for col in weather_cols:
+    for col in (c for c in weather.columns if c != "timestamp"):
         frame[col] = merged[col]
 
     frame = _add_calendar_features(frame, merged.index)
-    return frame.dropna().reset_index()
+    return frame.reset_index()
+
+
+def build_features(
+    pm25: pd.DataFrame,
+    weather: pd.DataFrame,
+    horizon: int = config.FORECAST_HORIZON_HOURS,
+    lags: tuple[int, ...] = DEFAULT_LAGS_H,
+    roll_window: int = ROLL_WINDOW_H,
+) -> pd.DataFrame:
+    """Build the modeling frame for training: only complete rows (target + features)."""
+    return _assemble(pm25, weather, horizon, lags, roll_window).dropna().reset_index(drop=True)
+
+
+def build_inference_features(
+    pm25_history: pd.DataFrame,
+    weather: pd.DataFrame,
+    origin: pd.Timestamp,
+    horizon: int = config.FORECAST_HORIZON_HOURS,
+    lags: tuple[int, ...] = DEFAULT_LAGS_H,
+    roll_window: int = ROLL_WINDOW_H,
+) -> pd.DataFrame:
+    """Build features for the ``horizon`` future hours after ``origin`` (unknown target).
+
+    Extends the PM2.5 series with placeholder future hours, assembles the matrix, then
+    returns the future rows whose features are all known. ``weather`` must cover the
+    span from before the deepest lag up to ``origin + horizon`` (use past+forecast).
+    """
+    future_index = pd.date_range(
+        origin + pd.Timedelta(hours=1), periods=horizon, freq="h"
+    )
+    pm25_ext = pd.concat(
+        [
+            pm25_history[["timestamp", "value"]],
+            pd.DataFrame({"timestamp": future_index, "value": np.nan}),
+        ],
+        ignore_index=True,
+    )
+    frame = _assemble(pm25_ext, weather, horizon, lags, roll_window)
+    cols = feature_columns(frame)
+    future_rows = frame[frame["timestamp"] > origin].dropna(subset=cols)
+    return future_rows.reset_index(drop=True)
 
 
 def feature_columns(features: pd.DataFrame) -> list[str]:
