@@ -44,6 +44,19 @@ def test_build_features_has_no_missing_values():
     assert not frame["target"].isna().any()
 
 
+def test_lags_stay_time_correct_across_a_missing_hour():
+    # Regression for the position-vs-time lag bug: drop an interior weather hour so the
+    # inner join loses it; after the hourly reindex, lags must still be time-correct.
+    pm25, weather = _make_data(400)
+    gap_ts = weather["timestamp"].iloc[200]
+    weather = weather[weather["timestamp"] != gap_ts].reset_index(drop=True)
+    frame = features.build_features(pm25, weather)
+    row = frame[frame["timestamp"] == _ORIGIN + pd.Timedelta(hours=230)]
+    assert len(row) == 1
+    # value == hour index, so lag_24 at position 230 must be exactly 206, not off-by-one
+    assert row["pm25_lag_24"].iloc[0] == float(230 - 24)
+
+
 def test_feature_columns_exclude_target_and_timestamp():
     pm25, weather = _make_data()
     frame = features.build_features(pm25, weather)
