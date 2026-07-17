@@ -105,6 +105,8 @@ def generate_report(
    (WHO 24h guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
 
 <h2>Model</h2>
+<p>Metrics from the held-out chronological test split; the deployed model is retrained on
+all data.</p>
 <table>
   <tr><th>Test MAE</th><td>{metrics.get('mae', 'n/a')} µg/m³</td></tr>
   <tr><th>Test RMSE</th><td>{metrics.get('rmse', 'n/a')} µg/m³</td></tr>

@@ -45,6 +45,10 @@ def to_hourly_grid(df: pd.DataFrame, column: str = "value") -> pd.DataFrame:
 
     Returns a frame with a ``timestamp`` column and ``column``, covering every hour
     between the first and last reading with no gaps in the index.
+
+    Known limitation: timestamps are naive local (Europe/Warsaw). At the DST changeover
+    this yields one phantom spring-forward hour (interpolated) and a fall-back duplicate
+    (collapsed by drop_duplicate_hours) — a couple of hours a year, accepted for simplicity.
     """
     if df.empty:
         return df[["timestamp", column]].copy()
