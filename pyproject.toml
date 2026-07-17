@@ -34,8 +34,6 @@ addopts = "-q"
 filterwarnings = [
     # numpy 2.5 / pandas date_range interaction — third-party, not our code.
     "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
-]
-filterwarnings = [
-    # Deprecation emitted by joblib's numpy pickling on NumPy 2.5 — third-party, not ours.
+    # joblib's numpy pickling on NumPy 2.5 — third-party, not ours.
     "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
 ]
