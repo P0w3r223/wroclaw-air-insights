@@ -58,14 +58,19 @@ def to_hourly_grid(df: pd.DataFrame, column: str = "value") -> pd.DataFrame:
 def interpolate_short_gaps(
     df: pd.DataFrame, column: str = "value", max_gap: int = MAX_INTERPOLATION_GAP_H
 ) -> pd.DataFrame:
-    """Linearly interpolate runs of at most ``max_gap`` consecutive NaNs.
+    """Linearly interpolate interior gaps whose *entire* run is at most ``max_gap`` NaNs.
 
-    Longer gaps are left as NaN. Assumes an hourly grid (see :func:`to_hourly_grid`).
+    Longer gaps are left fully NaN — we never invent a stretch of data that never
+    existed. (``Series.interpolate(limit=...)`` fills the first ``limit`` NaNs of *every*
+    run, so we instead gate on the length of the whole run.) Assumes an hourly grid.
     """
     out = df.copy()
-    out[column] = out[column].interpolate(
-        method="linear", limit=max_gap, limit_area="inside"
-    )
+    is_na = out[column].isna()
+    run_id = (is_na != is_na.shift()).cumsum()
+    run_len = out.groupby(run_id)[column].transform("size")
+    interpolated = out[column].interpolate(method="linear", limit_area="inside")
+    fill = is_na & (run_len <= max_gap)
+    out[column] = out[column].where(~fill, interpolated)
     return out
 
 

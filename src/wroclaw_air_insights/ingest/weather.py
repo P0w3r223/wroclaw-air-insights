@@ -51,7 +51,12 @@ def _get(url: str, params: dict) -> dict:
             except ValueError:
                 reason = response.text[:200]
             raise OpenMeteoError(f"Open-Meteo {url} -> HTTP {response.status_code}: {reason}")
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise OpenMeteoError(
+                f"Open-Meteo {url} -> non-JSON body on 200: {response.text[:200]}"
+            ) from exc
 
     raise OpenMeteoError(f"Open-Meteo {url} failed after {_MAX_RETRIES} attempts ({last_error})")
 
