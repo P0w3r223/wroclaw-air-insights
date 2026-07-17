@@ -1,0 +1,4 @@
+# Install the project in editable mode with dev extras (pytest, jupyterlab).
+# Runtime + dev dependencies are declared in pyproject.toml — this file is the
+# one-line entry point:  pip install -r requirements.txt
+-e .[dev]
