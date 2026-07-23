@@ -22,6 +22,23 @@ from wroclaw_air_insights import config, db  # noqa: E402
 from wroclaw_air_insights.forecast import model, serving  # noqa: E402
 from wroclaw_air_insights.ingest import gios  # noqa: E402
 
+# --- Chart styling: clean, print-quality matplotlib aligned with the page palette. ---
+_ACCENT = "#2563eb"
+_WHO_LINE = "#d97706"
+_CHART_STYLE = {
+    "figure.facecolor": "white", "axes.facecolor": "white",
+    "axes.edgecolor": "#c3c2b7", "axes.linewidth": 0.8,
+    "axes.spines.top": False, "axes.spines.right": False,
+    "axes.grid": True, "axes.grid.axis": "y", "axes.axisbelow": True,
+    "grid.color": "#e3e7ee", "grid.linewidth": 0.9,
+    "axes.titlesize": 13, "axes.titleweight": "bold", "axes.titlecolor": "#1c2430",
+    "axes.titlepad": 12, "axes.labelcolor": "#667085", "axes.labelsize": 10.5,
+    "text.color": "#1c2430", "xtick.color": "#667085", "ytick.color": "#667085",
+    "xtick.labelsize": 9.5, "ytick.labelsize": 9.5, "font.size": 10.5,
+    "legend.frameon": False, "legend.fontsize": 9.5,
+}
+plt.rcParams.update(_CHART_STYLE)
+
 # Polish air-quality index categories -> display colour.
 _AQI_COLORS = {
     "Bardzo dobry": "#1a9850",
@@ -44,11 +61,14 @@ def _fig_to_base64(fig) -> str:
 
 def _forecast_chart(forecast_df) -> str:
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(forecast_df["timestamp"], forecast_df["predicted_pm25"],
-            marker="o", color="#4575b4", lw=2)
-    ax.axhline(config.PM25_WHO_DAILY, color="green", ls="--", lw=1,
-               label=f"WHO 24h ({config.PM25_WHO_DAILY})")
+    x, y = forecast_df["timestamp"], forecast_df["predicted_pm25"]
+    ax.fill_between(x, y, color=_ACCENT, alpha=0.08, zorder=1)
+    ax.plot(x, y, color=_ACCENT, lw=2.2, marker="o", markersize=5,
+            markerfacecolor="white", markeredgecolor=_ACCENT, zorder=3)
+    ax.axhline(config.PM25_WHO_DAILY, color=_WHO_LINE, ls="--", lw=1.4, zorder=2,
+               label=f"WHO 24h guideline ({config.PM25_WHO_DAILY})")
     ax.set(title="Predicted PM2.5 — next 24 hours", ylabel="PM2.5 (µg/m³)", xlabel="")
+    ax.margins(x=0.02)
     ax.legend(loc="upper right")
     fig.autofmt_xdate()
     return _fig_to_base64(fig)
@@ -80,11 +100,15 @@ def generate_report(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wrocław Air Insights — live forecast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body {{ font-family: system-ui, sans-serif; max-width: 820px; margin: 2rem auto;
-         padding: 0 1rem; color: #1a1a1a; }}
-  h1 {{ margin-bottom: 0.2rem; }}
-  .sub {{ color: #666; margin-top: 0; }}
+  body {{ font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+         -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+         max-width: 820px; margin: 2rem auto; padding: 0 1rem; color: #1c2430; }}
+  h1 {{ margin-bottom: 0.2rem; font-weight: 700; letter-spacing: -0.01em; }}
+  .sub {{ color: #667085; margin-top: 0; }}
   .badge {{ display: inline-block; padding: 0.4rem 0.9rem; border-radius: 999px;
            color: #fff; font-weight: 600; background: {colour}; }}
   img {{ max-width: 100%; height: auto; }}
