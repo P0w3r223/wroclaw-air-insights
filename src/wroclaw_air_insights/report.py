@@ -104,38 +104,44 @@ def generate_report(
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body {{ font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  body {{ font: 16px/1.55 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
          -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-         max-width: 820px; margin: 2rem auto; padding: 0 1rem; color: #1c2430; }}
-  h1 {{ margin-bottom: 0.2rem; font-weight: 700; letter-spacing: -0.01em; }}
+         max-width: 820px; margin: 0 auto; padding: 32px 20px 56px; color: #1c2430; }}
+  h1 {{ margin-bottom: 2px; font-weight: 700; letter-spacing: -0.01em; }}
+  h2 {{ font-weight: 600; }}
   .sub {{ color: #667085; margin-top: 0; }}
   .badge {{ display: inline-block; padding: 0.4rem 0.9rem; border-radius: 999px;
            color: #fff; font-weight: 600; background: {colour}; }}
-  img {{ max-width: 100%; height: auto; }}
-  table {{ border-collapse: collapse; margin: 1rem 0; }}
-  td, th {{ border: 1px solid #ddd; padding: 0.4rem 0.8rem; text-align: left; }}
-  footer {{ color: #888; font-size: 0.85rem; margin-top: 2rem; }}
+  .card {{ border: 1px solid #e3e7ee; border-radius: 12px; padding: 18px 20px; margin: 18px 0; }}
+  table {{ border-collapse: collapse; width: 100%; }}
+  th, td {{ text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef1f6; }}
+  img {{ max-width: 100%; height: auto; border-radius: 8px; }}
+  code {{ background: #eef1f6; padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }}
+  footer {{ color: #667085; font-size: 0.85rem; margin-top: 24px; }}
+  a {{ color: #2563eb; }}
 </style>
 </head>
 <body>
 <h1>Wrocław Air Insights</h1>
 <p class="sub">Live 24-hour PM2.5 forecast — {_station_name(station_id)}</p>
 
-<p>Current air-quality index: <span class="badge">{category}</span></p>
+<div class="card">
+  <p>Current air-quality index: <span class="badge">{category}</span></p>
+  <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
+  <p>Forecast peak: <strong>{peak:.1f} µg/m³</strong>
+     (WHO 24-hour guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
+</div>
 
-<img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
-
-<p>Forecast peak: <strong>{peak:.1f} µg/m³</strong>
-   (WHO 24h guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
-
-<h2>Model</h2>
-<p>Metrics from the held-out chronological test split; the deployed model is retrained on
-all data.</p>
-<table>
-  <tr><th>Test MAE</th><td>{metrics.get('mae', 'n/a')} µg/m³</td></tr>
-  <tr><th>Test RMSE</th><td>{metrics.get('rmse', 'n/a')} µg/m³</td></tr>
-  <tr><th>Test R²</th><td>{metrics.get('r2', 'n/a')}</td></tr>
-</table>
+<div class="card">
+  <h2>Model</h2>
+  <p>Metrics are computed on the held-out chronological test split; the deployed model is
+  retrained on all available data.</p>
+  <table>
+    <tr><th>Test MAE</th><td>{metrics.get('mae', 'n/a')} µg/m³</td></tr>
+    <tr><th>Test RMSE</th><td>{metrics.get('rmse', 'n/a')} µg/m³</td></tr>
+    <tr><th>Test R²</th><td>{metrics.get('r2', 'n/a')}</td></tr>
+  </table>
+</div>
 
 <footer>
   Generated {generated} ·
