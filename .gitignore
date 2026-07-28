@@ -32,3 +32,6 @@ reports/site/
 # OS
 .DS_Store
 Thumbs.db
+
+# Lokalny indeks CodeGraph (graf kodu per maszyna, odbudowywalny przez `codegraph init`)
+.codegraph/
