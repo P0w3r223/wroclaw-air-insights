@@ -75,6 +75,55 @@ def _forecast_chart(forecast_df) -> str:
     return _fig_to_base64(fig)
 
 
+def _backtest_chart(backtest: dict) -> str | None:
+    """Measured against forecast over the tail of the held-out window.
+
+    Three series on purpose: without the naive rule drawn beside it, a forecast that
+    simply repeats yesterday looks impressive here, because tracking PM2.5 a day late
+    still tracks it.
+    """
+    stamps = [datetime.fromisoformat(t) for t in backtest.get("timestamps") or []]
+    actual, predicted = backtest.get("actual") or [], backtest.get("predicted") or []
+    if not stamps or len(stamps) != len(actual) or len(stamps) != len(predicted):
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 3.6))
+    ax.fill_between(stamps, actual, color="#1c2430", alpha=0.07, zorder=1)
+    ax.plot(stamps, actual, color="#1c2430", lw=1.8, zorder=3, label="Measured")
+    ax.plot(stamps, predicted, color=_ACCENT, lw=1.8, zorder=4, label="Forecast (24h ahead)")
+
+    naive = backtest.get("naive")
+    if naive and len(naive) == len(stamps):
+        ax.plot(stamps, naive, color="#98a2b3", lw=1.1, ls="--", zorder=2,
+                label=f"Naive — {baseline.LABELS['persistence']}")
+
+    ax.axhline(config.PM25_WHO_DAILY, color=_WHO_LINE, ls=":", lw=1.2, zorder=2)
+    ax.set(title="Forecast against what was measured — held-out hours",
+           ylabel="PM2.5 (µg/m³)", xlabel="")
+    ax.margins(x=0.01)
+    ax.legend(loc="upper right", ncol=3)
+    fig.autofmt_xdate()
+    return _fig_to_base64(fig)
+
+
+def _backtest_section(metadata: dict) -> str:
+    """The chart plus the sentence that makes it evidence rather than decoration."""
+    backtest = metadata.get("backtest") or {}
+    chart = _backtest_chart(backtest) if backtest.get("timestamps") else None
+    if not chart:
+        return ""
+
+    days = backtest.get("days")
+    span = f"{days} days" if isinstance(days, int) else "the final stretch"
+    hours = len(backtest["timestamps"])
+    return f"""  <h3>The last {span} of the test window, hour by hour</h3>
+  <img src="data:image/png;base64,{chart}" alt="Forecast against measured PM2.5">
+  <p class="hint">{hours:,} hours the model had never seen. These come from the
+  chronologically-trained model, not from the one serving the chart at the top of this
+  page — that one is refitted on all available data, so plotting <em>its</em> fit over
+  recent days would be showing it hours it learned from.</p>"""
+
+
 def _station_name(station_id: int) -> str:
     return next((s.name for s in config.STATIONS if s.id == station_id), f"station {station_id}")
 
@@ -544,6 +593,7 @@ def generate_report(
     metrics_table = _metrics_table(metadata)
     verdict = _verdict(metadata)
     skill_line = _skill_line(metadata)
+    backtest_section = _backtest_section(metadata)
     regime_section = _regime_section(metadata)
     glossary = _glossary(metadata)
     n_test = metadata.get("n_test")
@@ -625,6 +675,7 @@ def generate_report(
   {verdict}
 {metrics_table}
   {skill_line}
+{backtest_section}
 {regime_section}
 {glossary}
 </div>

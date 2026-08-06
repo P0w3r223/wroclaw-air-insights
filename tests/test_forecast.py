@@ -282,6 +282,59 @@ def test_regime_breakdown_defaults_to_the_who_guideline_level():
     assert result["threshold"] == config.PM25_WHO_DAILY
 
 
+# --- Backtest series ---------------------------------------------------------
+def _backtest_inputs(hours: int = 30 * 24):
+    ts = pd.date_range(_ORIGIN, periods=hours, freq="h")
+    test_df = pd.DataFrame({"timestamp": ts})
+    y_true = pd.Series(np.arange(hours, dtype=float))
+    y_pred = y_true + 1.0
+    return test_df, y_true, y_pred
+
+
+def test_backtest_series_keeps_only_the_tail_of_the_window():
+    test_df, y_true, y_pred = _backtest_inputs()
+    series = model.backtest_series(test_df, y_true, y_pred, days=7)
+    assert series["days"] == 7
+    assert len(series["timestamps"]) == 7 * 24 + 1  # inclusive of the boundary hour
+    assert series["timestamps"][-1] == test_df["timestamp"].iloc[-1].isoformat()
+
+
+def test_backtest_series_arrays_stay_aligned_and_take_the_matching_rows():
+    test_df, y_true, y_pred = _backtest_inputs()
+    series = model.backtest_series(test_df, y_true, y_pred, days=7)
+    assert len(series["actual"]) == len(series["predicted"]) == len(series["timestamps"])
+    # The chart is only honest if row i of every array is the same hour.
+    assert series["actual"][-1] == pytest.approx(float(len(y_true) - 1))
+    assert series["predicted"][-1] == pytest.approx(float(len(y_true)))
+
+
+def test_backtest_series_includes_the_naive_rule_only_when_it_is_given():
+    test_df, y_true, y_pred = _backtest_inputs()
+    assert "naive" not in model.backtest_series(test_df, y_true, y_pred, days=3)
+    with_naive = model.backtest_series(test_df, y_true, y_pred, y_true - 2.0, days=3)
+    assert len(with_naive["naive"]) == len(with_naive["timestamps"])
+
+
+@pytest.mark.parametrize(
+    "test_df",
+    [pd.DataFrame({"target": [1.0]}), pd.DataFrame({"timestamp": pd.to_datetime([])})],
+    ids=["no_timestamp_column", "empty"],
+)
+def test_backtest_series_is_none_when_there_is_no_window_to_chart(test_df):
+    assert model.backtest_series(test_df, pd.Series(dtype=float), []) is None
+
+
+def test_run_experiment_stores_a_backtest_the_model_never_trained_on():
+    pm25, weather = _make_data(1200)
+    frame = features.build_features(pm25, weather)
+    results, _ = model.run_experiment(frame, test_fraction=0.2)
+    backtest = results["backtest"]
+
+    train_end = pd.Timestamp(results["test_window"]["start"])
+    assert pd.Timestamp(backtest["timestamps"][0]) >= train_end
+    assert "naive" in backtest
+
+
 # --- Importance: grouping, and measurement on held-out rows ------------------
 def _make_signal_data(hours: int = 700, seed: int = 0):
     """PM2.5 driven by the weather at the same hour, with lags carrying no extra signal.

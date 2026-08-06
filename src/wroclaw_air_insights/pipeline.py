@@ -69,6 +69,15 @@ def ingest_history(
     return pollutants
 
 
+def _loggable(results: dict) -> dict:
+    """Results with the backtest arrays reduced to a count — they belong in the bundle,
+    not in a CI log, where a few hundred hourly rows would bury every other figure."""
+    backtest = results.get("backtest")
+    if not backtest:
+        return results
+    return {**results, "backtest": f"<{len(backtest.get('timestamps', []))} hours>"}
+
+
 def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Read stored data, build features, train, and evaluate vs baseline."""
     conn = db.connect()
@@ -99,7 +108,7 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
 
     results, _ = model.run_experiment(feature_frame, model_name=winner)
     print("[train] results:")
-    print(json.dumps(results, indent=2))
+    print(json.dumps(_loggable(results), indent=2))
 
     # Fit the final model on ALL data (for serving) and persist it.
     x_all, y_all = features.split_xy(feature_frame)
