@@ -402,7 +402,7 @@ def test_regime_section_renders_nothing_without_a_breakdown(metadata):
 
 
 # --- _backtest_section --------------------------------------------------------
-def _backtest(hours: int = 48, naive: bool = True):
+def _backtest(hours: int = 14 * 24 + 1, naive: bool = True):
     stamps = pd.date_range("2026-07-03", periods=hours, freq="h")
     series = {
         "days": 14,
@@ -418,8 +418,22 @@ def _backtest(hours: int = 48, naive: bool = True):
 def test_backtest_section_embeds_the_chart_and_counts_the_hours():
     html = report._backtest_section(_fresh_metadata(backtest=_backtest()))
     assert "The last 14 days of the test window" in html
-    assert "48 hours the model had never seen" in html
+    assert "337 hours the model had never seen" in html
     assert 'src="data:image/png;base64,' in html
+
+
+@pytest.mark.parametrize(
+    "hours,expected",
+    [(14 * 24 + 1, "The last 14 days"), (49, "The last 2 days"),
+     (25, "The last day"), (6, "The last hours")],
+    ids=["full_window", "two_days", "one_day", "part_of_a_day"],
+)
+def test_backtest_section_headlines_the_span_the_data_covers(hours, expected):
+    """The stored `days` is what was requested. A shorter test window would otherwise be
+    announced as 14 days — the section would be claiming coverage it does not have."""
+    series = _backtest(hours=hours)
+    assert series["days"] == 14  # request unchanged; only the heading follows the data
+    assert expected in report._backtest_section(_fresh_metadata(backtest=series))
 
 
 def test_backtest_section_says_which_model_the_chart_is_not_from():
