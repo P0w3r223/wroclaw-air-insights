@@ -312,6 +312,56 @@ therefore not obviously the right one — see the entry itself.
    one-model-plus-lead against per-horizon specialists, then the restructure — or not,
    depending on what the pilot says.
 
+   ### Pilot result — the proposed shape is refuted, the lever is real
+
+   The (origin × lead) matrix was built for real (206 016 rows before dropna, 22 columns) and
+   both designs were scored on **identical rows and folds**: one model fitted across all 24
+   leads, versus one model per lead, versus the reading at the origin.
+
+   *A leak had to be closed first, and it is specific to this design.* Rows from neighbouring
+   origins share target hours — training row (origin `T`, lead 24) is labelled with the
+   observation at `T+24`, and test row (origin `T+1`, lead 23) is scored on that same hour. A
+   plain chronological cut trains on a label the test set is about to be graded against. Each
+   fold therefore embargoes training rows whose target time reaches the first test origin
+   (276 rows per fold). This does not arise in the current single-horizon design, where train
+   and test targets are an hour apart and never coincide.
+
+   Mean CV MAE, µg/m³:
+
+   | Lead | Naive | Ridge pooled | Ridge per-lead | HGB pooled | HGB per-lead |
+   |------|:-----:|:------------:|:--------------:|:----------:|:------------:|
+   | 1 h  | **3.750** | 6.122 | **3.751** | 6.254 | 4.088 |
+   | 3 h  | 5.517 | 6.475 | **5.271** | 6.393 | 5.386 |
+   | 6 h  | 7.202 | 6.862 | 6.458 | 6.531 | **6.107** |
+   | 12 h | 8.514 | 7.287 | 7.285 | 6.688 | **6.526** |
+   | 24 h | 8.609 | 7.718 | 8.217 | **6.817** | 7.122 |
+
+   **One model with a lead feature is the wrong design.** At lead 1 it lands at 6.1–6.3
+   against the naive rule's 3.75 — 63% *worse* than doing nothing at all. Pooling forces one
+   set of parameters onto tasks whose relationship to the inputs is not the same: at lead 1
+   the answer is nearly "copy `pm25_origin`", at lead 24 that feature is almost noise, and a
+   lead *column* cannot express the interaction. Ridge structurally cannot; a tree can in
+   principle, so capacity was the obvious objection and it was tested — 255 leaves and 500
+   iterations instead of 31 and 100 made the pooled model **worse at every lead** (lead 1:
+   6.54, lead 24: 7.06). Overfitting, not underfitting. The weakness is structural.
+
+   **The lever is real, and it belongs to specialists.** Per-lead, the near hours improve from
+   the ~6.97 a single 24h model delivers at every lead to **3.75 at lead 1** and 5.27 at 3h —
+   the 2.8 µg/m³ the sweep priced, collected by a different mechanism than item 5 proposed.
+
+   **Two findings to carry into the implementation.** First, at lead 1 the best model *ties*
+   the naive rule (3.751 vs 3.750): the honest product decision for the first hour or two is
+   to serve persistence and say so, not to serve a model that merely matches it. Second,
+   pooling wins at lead 24 (6.817 vs 7.122) — the hardest task benefits from the extra rows
+   that related leads provide. So the endpoint is probably neither pure design but per-lead
+   selection over {naive, per-lead model, pooled model}, which the existing `select_model`
+   machinery already expresses, one lead at a time.
+
+   **Cost, with the RandomForest question settled by the same numbers.** Per-lead selection is
+   3 candidates × 5 folds × 24 leads = 360 fits. At ~8.5k rows each that is ~2 min without
+   RandomForest and ~8 min with it, on top of a daily job that runs ~9 min today — for a
+   candidate that wins no lead in the table above. Drop it from the multi-horizon path.
+
 6. **Prediction intervals.** sklearn ≥1.5 is pinned, so
    `HistGradientBoostingRegressor(loss="quantile")` is two extra fits — but on RF it needs
    per-tree spread or a third-party quantile forest. Sequence after the model choice, now settled.
