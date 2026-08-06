@@ -187,6 +187,9 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/01_analysis.ipynb
   every feature is knowable at the forecast origin.
 - **Importance measured by removal, on held-out rows** — grouped, because near-duplicate
   columns hide each other's contribution, and because impurity importances disagree.
+- **Backtest drawn from held-out predictions** — the published chart uses the
+  chronologically-trained model's output, never the deployed all-data model's fit over
+  days it learned from, with the naive rule plotted beside it.
 - **Explicit missing-data handling** — station gaps are treated, not ignored.
 
 ## Live report

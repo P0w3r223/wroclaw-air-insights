@@ -401,6 +401,57 @@ def test_regime_section_renders_nothing_without_a_breakdown(metadata):
     assert report._regime_section(metadata) == ""
 
 
+# --- _backtest_section --------------------------------------------------------
+def _backtest(hours: int = 48, naive: bool = True):
+    stamps = pd.date_range("2026-07-03", periods=hours, freq="h")
+    series = {
+        "days": 14,
+        "timestamps": [t.isoformat() for t in stamps],
+        "actual": [10.0 + i % 7 for i in range(hours)],
+        "predicted": [11.0 + i % 7 for i in range(hours)],
+    }
+    if naive:
+        series["naive"] = [9.0 + i % 7 for i in range(hours)]
+    return series
+
+
+def test_backtest_section_embeds_the_chart_and_counts_the_hours():
+    html = report._backtest_section(_fresh_metadata(backtest=_backtest()))
+    assert "The last 14 days of the test window" in html
+    assert "48 hours the model had never seen" in html
+    assert 'src="data:image/png;base64,' in html
+
+
+def test_backtest_section_says_which_model_the_chart_is_not_from():
+    """The trap this section exists to avoid: charting the all-data model in-sample."""
+    html = report._backtest_section(_fresh_metadata(backtest=_backtest()))
+    assert "refitted on all available data" in html
+    assert "hours it learned from" in html
+
+
+def test_backtest_section_renders_without_the_naive_series():
+    html = report._backtest_section(_fresh_metadata(backtest=_backtest(naive=False)))
+    assert 'src="data:image/png;base64,' in html
+
+
+@pytest.mark.parametrize(
+    "backtest",
+    [
+        None,
+        {},
+        {"timestamps": [], "actual": [], "predicted": []},
+        {"timestamps": ["2026-07-03T00:00:00"], "actual": [1.0], "predicted": []},
+    ],
+    ids=["missing", "empty", "no_rows", "ragged_arrays"],
+)
+def test_backtest_section_renders_nothing_it_cannot_chart_honestly(backtest):
+    assert report._backtest_section(_fresh_metadata(backtest=backtest)) == ""
+
+
+def test_backtest_section_is_absent_from_a_legacy_bundle():
+    assert report._backtest_section(_LEGACY_METADATA) == ""
+
+
 # --- _fmt_signed --------------------------------------------------------------
 @pytest.mark.parametrize(
     "value,expected",
@@ -551,8 +602,9 @@ def test_glossary_drops_the_r2_reading_when_r2_was_not_stored():
 @pytest.mark.parametrize(
     "builder",
     [report._metrics_table, report._verdict, report._skill_line,
-     report._regime_section, report._glossary],
-    ids=["metrics_table", "verdict", "skill_line", "regime_section", "glossary"],
+     report._regime_section, report._backtest_section, report._glossary],
+    ids=["metrics_table", "verdict", "skill_line", "regime_section",
+         "backtest_section", "glossary"],
 )
 @pytest.mark.parametrize(
     "metadata",
