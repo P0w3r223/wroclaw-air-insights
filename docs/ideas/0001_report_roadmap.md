@@ -249,9 +249,21 @@ currently describes 24 tasks whose reference predictor is only correct for the l
 
 ### Then — make the page show its work
 
-3. **Backtest chart, last ~14 days.** Trap to avoid: the saved bundle holds the *all-data*
-   model, so charting its fit over recent days is in-sample. Needs the split-trained model,
-   which `train()` currently discards (`results, _ = model.run_experiment(...)`).
+3. **Backtest chart, last ~14 days — done.** The trap was correctly identified: the saved
+   bundle holds the *all-data* model, so charting its fit over recent days would show it
+   hours it trained on. The proposed fix — keep the split-trained model — was the wrong
+   half of the answer. The chart needs that model's *output*, not the model: `run_experiment`
+   already computes predictions on the held-out rows, so `backtest_series` stores the tail
+   of them as parallel arrays. A few hundred floats in the bundle instead of a second
+   serialised estimator, and no refit at report time.
+
+   The naive rule is drawn alongside, because a forecast that simply repeats yesterday
+   looks convincing on this chart — tracking PM2.5 a day late still tracks it. Two lines
+   make that visible; one line would have made the chart decorative.
+
+   Watch: `train` used to `json.dumps` the whole results dict, which would have printed
+   several hundred hourly rows into every CI log. The bundle keeps them, the log gets a
+   count.
 
 4. ~~**Feature importances.**~~ Promoted to 1a — see above. The coupling noted here turned
    out to be the whole story rather than an implementation detail:

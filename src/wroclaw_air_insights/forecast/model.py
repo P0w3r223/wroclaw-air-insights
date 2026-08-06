@@ -132,6 +132,42 @@ def regime_breakdown(
     }
 
 
+def backtest_series(
+    test_df: pd.DataFrame,
+    y_true: pd.Series,
+    y_pred,
+    naive_pred=None,
+    days: int = config.BACKTEST_WINDOW_DAYS,
+) -> dict | None:
+    """The last ``days`` of the held-out window as parallel arrays, ready to chart.
+
+    The *predictions* are stored rather than the model that made them, and that is the
+    whole point. The saved bundle holds a forecaster refitted on all available data, so
+    charting its fit over recent days would be in-sample — it would show the model
+    recalling hours it trained on and present that as evidence. These rows come from the
+    split-trained model, which never saw them, and they cost a few hundred floats instead
+    of a second serialised estimator.
+    """
+    if "timestamp" not in test_df or test_df.empty:
+        return None
+
+    stamps = pd.to_datetime(test_df["timestamp"])
+    recent = stamps >= stamps.max() - pd.Timedelta(days=days)
+    if not recent.any():
+        return None
+
+    mask = recent.to_numpy()
+    series = {
+        "days": days,
+        "timestamps": [t.isoformat() for t in stamps[mask]],
+        "actual": [round(float(v), 2) for v in np.asarray(y_true)[mask]],
+        "predicted": [round(float(v), 2) for v in np.asarray(y_pred)[mask]],
+    }
+    if naive_pred is not None:
+        series["naive"] = [round(float(v), 2) for v in np.asarray(naive_pred)[mask]]
+    return series
+
+
 def train_forecaster(
     x_train: pd.DataFrame, y_train: pd.Series, random_state: int = 42
 ) -> RandomForestRegressor:
@@ -327,6 +363,9 @@ def run_experiment(
         # means something once you know the naive rule is worse there too.
         "regime": regime_breakdown(y_test, model_predictions),
         "regime_persistence": regime_breakdown(y_test, base_predictions),
+        "backtest": backtest_series(
+            test_df, y_test, model_predictions, base_predictions
+        ),
     }
     return results, model
 
