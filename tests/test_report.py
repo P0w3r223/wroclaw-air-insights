@@ -144,7 +144,7 @@ def test_row_is_omitted_entirely_when_metrics_were_never_recorded(metrics):
 def test_row_shows_na_for_a_metric_the_bundle_lacks():
     html = report._row("Naive rule", {"mae": 5.0})
     assert "<td>5.00</td>" in html
-    assert html.count("<td>n/a</td>") == 2  # rmse and r2
+    assert html.count("<td>n/a</td>") == 3  # rmse, r2 and bias
     assert "nan" not in html
 
 
@@ -270,6 +270,196 @@ def test_skill_line_keeps_the_improvement_clause_alone_when_skill_is_missing():
 )
 def test_skill_line_renders_nothing_without_a_comparison(metadata):
     assert report._skill_line(metadata) == ""
+
+
+# --- _skill_line: the year-round comparison, added after the window one was found
+# --- to be describing a different period than the headline error above it.
+_YEAR_ROUND = {
+    "cross_validation_baseline": {"n_splits": 5, "mae_mean": 8.61, "mae_std": 2.1},
+    "mae_improvement_pct_cv": 24.5,
+}
+
+
+def test_skill_line_leads_with_the_comparison_the_headline_error_comes_from():
+    html = report._skill_line(_fresh_metadata(**_YEAR_ROUND))
+    assert html.index("same rolling folds") < html.index("held-out window")
+    assert "<strong>24.5% smaller</strong>" in html
+    assert "6.50 against 8.61 µg/m³" in html
+
+
+def test_skill_line_marks_the_window_figure_as_the_second_one_when_both_are_present():
+    html = report._skill_line(_fresh_metadata(**_YEAR_ROUND))
+    assert "On the single held-out window in the table below, that gap is" in html
+    # The window figure must not be re-introduced as if it were the primary claim.
+    assert html.count("the model's average miss is") == 1
+
+
+def test_skill_line_keeps_the_window_wording_for_a_bundle_saved_before_this_change():
+    html = report._skill_line(_fresh_metadata())
+    assert html.startswith('<p class="skill">On the held-out window, ')
+    assert "rolling folds" not in html
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"mae_improvement_pct_cv": None},
+        {"cross_validation_baseline": {}},
+        {"cross_validation_baseline": {"mae_mean": _NAN}},
+    ],
+    ids=["no_pct", "no_baseline_cv", "nan_baseline_cv"],
+)
+def test_skill_line_drops_the_year_round_clause_when_half_of_it_is_missing(overrides):
+    html = report._skill_line(_fresh_metadata(**{**_YEAR_ROUND, **overrides}))
+    assert "rolling folds" not in html
+    assert "On the held-out window, " in html
+    assert "nan" not in html and "None" not in html
+
+
+# --- _regime_section: the split at the guideline level ------------------------
+def _regime(clean_mae=3.3, clean_bias=2.15, elevated_mae=4.61, elevated_bias=-2.73,
+            hit_rate=0.568, false_alarm_ratio=0.419):
+    return {
+        "threshold": 15.0,
+        "clean": {"n": 1280, "mae": clean_mae, "bias": clean_bias},
+        "elevated": {"n": 437, "mae": elevated_mae, "bias": elevated_bias},
+        "detection": {
+            "hits": 248, "misses": 189, "false_alarms": 179,
+            "hit_rate": hit_rate, "false_alarm_ratio": false_alarm_ratio,
+        },
+    }
+
+
+_WITH_REGIME = {
+    "regime": _regime(),
+    "regime_persistence": _regime(
+        clean_mae=4.37, clean_bias=1.70, elevated_mae=6.35, elevated_bias=-4.95,
+        hit_rate=0.405, false_alarm_ratio=0.595,
+    ),
+}
+
+
+def test_regime_section_shows_both_sides_of_the_guideline_with_their_hour_counts():
+    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    assert "Below 15 µg/m³" in html
+    assert "At or above 15 µg/m³" in html
+    assert "1,280 hours" in html
+    assert "437 hours" in html
+
+
+def test_regime_section_keeps_the_sign_so_the_two_directions_stay_visible():
+    """The whole point: high on clean hours, low on polluted ones. Unsigned it vanishes."""
+    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    assert "+2.15" in html
+    assert "-2.73" in html
+
+
+def test_regime_section_puts_the_naive_rule_in_the_same_table():
+    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    assert "+1.70" in html and "-4.95" in html
+    assert "Naive MAE" in html
+
+
+def test_regime_section_states_detection_against_the_naive_rule():
+    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    assert "flagged <strong>57%</strong>" in html
+    assert "the naive rule: 40%" in html  # 0.405 -> banker's rounding at the half
+    assert "<strong>42%</strong> of the hours it flagged turned out to be below" in html
+
+
+def test_regime_section_says_the_threshold_is_a_reference_not_a_compliance_test():
+    # Applying a 24h guideline to hourly readings is exactly the category error this
+    # roadmap item was written to avoid repeating.
+    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    assert "not as a compliance test" in html
+
+
+def test_regime_section_drops_the_detection_line_when_no_hour_was_elevated():
+    calm = _regime()
+    calm["elevated"] = {"n": 0, "mae": None, "bias": None}
+    calm["detection"] = {"hits": 0, "misses": 0, "false_alarms": 0,
+                         "hit_rate": None, "false_alarm_ratio": None}
+    html = report._regime_section(_fresh_metadata(regime=calm))
+    assert "flagged" not in html
+    assert "Below 15 µg/m³" in html
+    assert "n/a" in html  # the elevated row still renders, without numbers
+    assert "None" not in html
+
+
+def test_regime_section_omits_the_naive_columns_a_bundle_never_stored():
+    html = report._regime_section(_fresh_metadata(regime=_regime()))
+    assert "Below 15 µg/m³" in html
+    assert "the naive rule:" not in html
+    assert "None" not in html
+
+
+@pytest.mark.parametrize(
+    "metadata", [{}, _LEGACY_METADATA, {"regime": {"clean": {}, "elevated": {}}}],
+    ids=["empty", "legacy_bundle", "no_hours"],
+)
+def test_regime_section_renders_nothing_without_a_breakdown(metadata):
+    assert report._regime_section(metadata) == ""
+
+
+# --- _backtest_section --------------------------------------------------------
+def _backtest(hours: int = 48, naive: bool = True):
+    stamps = pd.date_range("2026-07-03", periods=hours, freq="h")
+    series = {
+        "days": 14,
+        "timestamps": [t.isoformat() for t in stamps],
+        "actual": [10.0 + i % 7 for i in range(hours)],
+        "predicted": [11.0 + i % 7 for i in range(hours)],
+    }
+    if naive:
+        series["naive"] = [9.0 + i % 7 for i in range(hours)]
+    return series
+
+
+def test_backtest_section_embeds_the_chart_and_counts_the_hours():
+    html = report._backtest_section(_fresh_metadata(backtest=_backtest()))
+    assert "The last 14 days of the test window" in html
+    assert "48 hours the model had never seen" in html
+    assert 'src="data:image/png;base64,' in html
+
+
+def test_backtest_section_says_which_model_the_chart_is_not_from():
+    """The trap this section exists to avoid: charting the all-data model in-sample."""
+    html = report._backtest_section(_fresh_metadata(backtest=_backtest()))
+    assert "refitted on all available data" in html
+    assert "hours it learned from" in html
+
+
+def test_backtest_section_renders_without_the_naive_series():
+    html = report._backtest_section(_fresh_metadata(backtest=_backtest(naive=False)))
+    assert 'src="data:image/png;base64,' in html
+
+
+@pytest.mark.parametrize(
+    "backtest",
+    [
+        None,
+        {},
+        {"timestamps": [], "actual": [], "predicted": []},
+        {"timestamps": ["2026-07-03T00:00:00"], "actual": [1.0], "predicted": []},
+    ],
+    ids=["missing", "empty", "no_rows", "ragged_arrays"],
+)
+def test_backtest_section_renders_nothing_it_cannot_chart_honestly(backtest):
+    assert report._backtest_section(_fresh_metadata(backtest=backtest)) == ""
+
+
+def test_backtest_section_is_absent_from_a_legacy_bundle():
+    assert report._backtest_section(_LEGACY_METADATA) == ""
+
+
+# --- _fmt_signed --------------------------------------------------------------
+@pytest.mark.parametrize(
+    "value,expected",
+    [(2.15, "+2.15"), (-2.73, "-2.73"), (0, "+0.00"), (_NAN, "n/a"), (None, "n/a")],
+    ids=["positive", "negative", "zero", "nan", "missing"],
+)
+def test_fmt_signed_always_shows_the_direction(value, expected):
+    assert report._fmt_signed(value) == expected
 
 
 # --- _selection_note ----------------------------------------------------------
@@ -411,8 +601,10 @@ def test_glossary_drops_the_r2_reading_when_r2_was_not_stored():
 # --- Cross-cutting: nothing unusable ever reaches the page --------------------
 @pytest.mark.parametrize(
     "builder",
-    [report._metrics_table, report._verdict, report._skill_line, report._glossary],
-    ids=["metrics_table", "verdict", "skill_line", "glossary"],
+    [report._metrics_table, report._verdict, report._skill_line,
+     report._regime_section, report._backtest_section, report._glossary],
+    ids=["metrics_table", "verdict", "skill_line", "regime_section",
+         "backtest_section", "glossary"],
 )
 @pytest.mark.parametrize(
     "metadata",

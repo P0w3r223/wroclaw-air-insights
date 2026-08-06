@@ -23,6 +23,8 @@ from wroclaw_air_insights.ingest import gios, weather
 
 _MAX_ARCHIVAL_DAYS = 366
 _CV_SPLITS = 5
+# Fallback when no bundle has been trained yet and nothing records what is deployed.
+_DEFAULT_MODEL = "HistGradientBoosting"
 
 
 def ingest_history(
@@ -67,6 +69,15 @@ def ingest_history(
     return pollutants
 
 
+def _loggable(results: dict) -> dict:
+    """Results with the backtest arrays reduced to a count — they belong in the bundle,
+    not in a CI log, where a few hundred hourly rows would bury every other figure."""
+    backtest = results.get("backtest")
+    if not backtest:
+        return results
+    return {**results, "backtest": f"<{len(backtest.get('timestamps', []))} hours>"}
+
+
 def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Read stored data, build features, train, and evaluate vs baseline."""
     conn = db.connect()
@@ -86,9 +97,18 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     print(f"[train] model selection ({selection['selected_on']}) -> {winner}")
     print(json.dumps(selection["cv_by_model"], indent=2))
 
+    # The naive rule scored on the SAME folds as the winner, so the improvement the report
+    # prints describes the same year the headline error describes. Measured on the single
+    # summer split alone the same model looks ~6 points better than it is.
+    cv_model = selection["cv_by_model"][winner]
+    cv_baseline = model.cross_validate_baseline(feature_frame, n_splits=_CV_SPLITS)
+    cv_improvement = model.improvement_pct(cv_model["mae_mean"], cv_baseline["mae_mean"])
+    print(f"[train] year-round: model {cv_model['mae_mean']} vs naive "
+          f"{cv_baseline['mae_mean']} µg/m³ -> {cv_improvement}% better")
+
     results, _ = model.run_experiment(feature_frame, model_name=winner)
     print("[train] results:")
-    print(json.dumps(results, indent=2))
+    print(json.dumps(_loggable(results), indent=2))
 
     # Fit the final model on ALL data (for serving) and persist it.
     x_all, y_all = features.split_xy(feature_frame)
@@ -100,7 +120,9 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
         metadata={
             **results,  # split metrics, both references, window bounds, skill
             "metrics": results["model"],  # alias kept for readers of the saved bundle
-            "cross_validation": selection["cv_by_model"][winner],
+            "cross_validation": cv_model,
+            "cross_validation_baseline": cv_baseline,
+            "mae_improvement_pct_cv": cv_improvement,
             "selection": selection,
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
@@ -130,6 +152,54 @@ def compare(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     return {"single_split": single_split, "cross_validation": cv}
 
 
+def _deployed_model_name() -> str:
+    """Name of the model the saved bundle actually holds, so importances match what runs."""
+    try:
+        return model.load_model()["metadata"].get("model_name") or _DEFAULT_MODEL
+    except FileNotFoundError:
+        return _DEFAULT_MODEL
+
+
+def importance(
+    station_id: int = config.PRIMARY_STATION_ID, model_name: str | None = None
+) -> dict:
+    """Measure what each source of information is worth — on held-out rows, in µg/m³.
+
+    Exists because impurity importances (``feature_importances_``) disagree with held-out
+    measurement on this dataset, and it was the impurity ranking that got published. This
+    command is the reproduction recipe for the corrected numbers in the README.
+    """
+    conn = db.connect()
+    try:
+        pm25 = db.read_pm25(conn, station_id)
+        weather_df = db.read_weather(conn)
+    finally:
+        conn.close()
+
+    feature_frame = features.build_features(pm25, weather_df)
+    name = model_name or _deployed_model_name()
+    print(f"[importance] {len(feature_frame)} rows, measuring {name}")
+
+    grouped = model.group_importances(feature_frame, name)
+    print("[importance] by source (MAE in µg/m³; full model "
+          f"{grouped['full_mae']}, persistence {grouped['persistence_mae']}):")
+    print(json.dumps(grouped["groups"], indent=2))
+
+    # Second fit on purpose: the per-column view answers a different question and keeping
+    # the two functions independent is worth more here than saving one fit in an analysis
+    # command that nobody runs on a schedule.
+    train_df, test_df = model.time_based_split(feature_frame)
+    x_train, y_train = features.split_xy(train_df)
+    x_test, y_test = features.split_xy(test_df)
+    estimator = model.build_models()[name]
+    estimator.fit(x_train, y_train)
+    per_column = model.permutation_importances(estimator, x_test, y_test)
+    print("[importance] top single columns (MAE increase when shuffled):")
+    print(per_column.head(10).round(3).to_string())
+
+    return {"groups": grouped, "per_column": per_column}
+
+
 def predict(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Forecast PM2.5 for the next 24h (training + saving a model first if none exists)."""
     try:
@@ -155,6 +225,13 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest_cmd.add_argument("--days", type=int, default=365)
     sub.add_parser("train", help="train + evaluate the forecaster")
     sub.add_parser("compare", help="compare baselines + models (single split + rolling CV)")
+    importance_cmd = sub.add_parser(
+        "importance", help="what each source of information is worth (held-out, µg/m³)"
+    )
+    importance_cmd.add_argument(
+        "--model", dest="model_name", default=None,
+        help="candidate to measure (default: whatever the saved bundle deployed)",
+    )
     sub.add_parser("predict", help="forecast PM2.5 for the next 24h (live)")
     all_cmd = sub.add_parser("all", help="ingest then train")
     all_cmd.add_argument("--days", type=int, default=365)
@@ -174,6 +251,8 @@ def main(argv: list[str] | None = None) -> None:
         train()
     elif args.command == "compare":
         compare()
+    elif args.command == "importance":
+        importance(model_name=args.model_name)
     elif args.command == "predict":
         predict()
     elif args.command == "all":

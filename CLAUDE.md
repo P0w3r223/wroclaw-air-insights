@@ -44,6 +44,14 @@ docs/research/        # data-source research + decisions
   never assume a continuous series.
 - **Train/serve consistency.** Weather features for training come from Open-Meteo's
   Historical Forecast API (same models as the live Forecast API).
+- **An accuracy claim carries its uncertainty.** State a CV MAE delta next to the fold
+  spread. A delta inside the spread is a null result — publish it as one, don't ship it as
+  an improvement. The rejected wind-encoding item in `docs/ideas/0001_report_roadmap.md`
+  is the worked example.
+- **Importance is measured by removal, on held-out rows** (`pipeline importance`), and by
+  group — near-duplicate columns mask each other, and impurity `feature_importances_`
+  disagrees with held-out measurement on this dataset. Never publish a ranking without
+  naming which estimator produced it.
 
 ## Conventions
 
@@ -63,6 +71,7 @@ pytest                                                    # tests
 
 python -m wroclaw_air_insights.pipeline all --days 365    # ingest + train
 python -m wroclaw_air_insights.pipeline compare           # models vs baselines + CV
+python -m wroclaw_air_insights.pipeline importance        # held-out importance by source
 python -m wroclaw_air_insights.pipeline predict           # live next-24h forecast
 python -m wroclaw_air_insights.report                     # build the Pages HTML report
 ```

@@ -123,3 +123,7 @@ WEATHER_HOURLY_VARS: tuple[str, ...] = (
 
 # --- Forecast task -----------------------------------------------------------
 FORECAST_HORIZON_HOURS = 24
+
+# How much of the held-out window the report charts as a backtest. Long enough to show
+# several daily cycles, short enough that hourly points stay readable.
+BACKTEST_WINDOW_DAYS = 14
