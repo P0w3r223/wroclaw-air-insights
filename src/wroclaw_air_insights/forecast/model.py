@@ -44,6 +44,19 @@ def evaluate(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
     }
 
 
+def skill_score(model_rmse: float, reference_rmse: float) -> float:
+    """Fraction of a reference predictor's squared error that the model removes.
+
+    ``1 - MSE_model / MSE_reference``: 1 is perfect, 0 is no better than the reference,
+    negative is worse. R² is this same score with climatology (the mean of the scored
+    window) as the reference — naming both as skill keeps them comparable instead of
+    letting one masquerade as a different kind of number.
+    """
+    if not reference_rmse:
+        return 0.0
+    return round(1 - (model_rmse**2) / (reference_rmse**2), 3)
+
+
 def train_forecaster(
     x_train: pd.DataFrame, y_train: pd.Series, random_state: int = 42
 ) -> RandomForestRegressor:
@@ -79,6 +92,11 @@ def run_experiment(
 
     model_metrics = evaluate(y_test, model.predict(x_test))
     base_metrics = evaluate(y_test, baseline.persistence_prediction(test_df))
+    # Climatology: predict the training-period mean for every hour. It is the reference
+    # R² implicitly scores against, so making it an explicit row keeps R² honest —
+    # "beats persistence" and "beats a flat line" are two different claims.
+    climatology = pd.Series(y_train.mean(), index=y_test.index)
+    clim_metrics = evaluate(y_test, climatology)
 
     base_mae = base_metrics["mae"]
     improvement = round(100 * (base_mae - model_metrics["mae"]) / base_mae, 1) if base_mae else 0.0
@@ -86,11 +104,31 @@ def run_experiment(
     results = {
         "n_train": len(train_df),
         "n_test": len(test_df),
+        # The test window's own statistics: MAE means nothing without the level and the
+        # spread of the period it was measured on, and both swing hard with the season.
+        "test_window": _window_bounds(test_df),
+        "test_mean_pm25": round(float(y_test.mean()), 3),
+        "test_std_pm25": round(float(y_test.std()), 3),
+        "train_std_pm25": round(float(y_train.std()), 3),
         "model": model_metrics,
         "baseline_persistence": base_metrics,
+        "baseline_climatology": clim_metrics,
+        "baseline_label": baseline.LABELS["persistence"],
         "mae_improvement_pct": improvement,
+        "skill_vs_persistence": skill_score(model_metrics["rmse"], base_metrics["rmse"]),
     }
     return results, model
+
+
+def _window_bounds(df: pd.DataFrame) -> dict[str, str] | None:
+    """First and last date covered by ``df``, for labelling which period was scored."""
+    if "timestamp" not in df or df.empty:
+        return None
+    stamps = pd.to_datetime(df["timestamp"])
+    return {
+        "start": stamps.min().date().isoformat(),
+        "end": stamps.max().date().isoformat(),
+    }
 
 
 # --- Model comparison & rolling cross-validation -----------------------------

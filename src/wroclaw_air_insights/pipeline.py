@@ -22,6 +22,7 @@ from wroclaw_air_insights.forecast import features, model, serving
 from wroclaw_air_insights.ingest import gios, weather
 
 _MAX_ARCHIVAL_DAYS = 366
+_CV_SPLITS = 5
 
 
 def ingest_history(
@@ -82,6 +83,12 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     print("[train] results:")
     print(json.dumps(results, indent=2))
 
+    # A single split is one season's worth of luck. Rolling-origin CV spans every fold,
+    # so the reported error covers winter too — this is the number the report headlines.
+    cv = model.cross_validate(feature_frame, "RandomForest", n_splits=_CV_SPLITS)
+    print("[train] rolling cross-validation:")
+    print(json.dumps(cv, indent=2))
+
     # Fit the final model on ALL data (for serving) and persist it.
     x_all, y_all = features.split_xy(feature_frame)
     final_model = model.train_forecaster(x_all, y_all)
@@ -89,13 +96,9 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
         final_model,
         list(x_all.columns),
         metadata={
-            "metrics": results["model"],
-            # The baseline numbers travel with the model: metrics are only meaningful
-            # next to the naive reference the model had to beat.
-            "baseline_metrics": results["baseline_persistence"],
-            "mae_improvement_pct": results["mae_improvement_pct"],
-            "n_train": results["n_train"],
-            "n_test": results["n_test"],
+            **results,  # split metrics, both references, window bounds, skill
+            "metrics": results["model"],  # alias kept for readers of the saved bundle
+            "cross_validation": cv,
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
         },

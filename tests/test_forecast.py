@@ -6,6 +6,7 @@ into the past, which is the methodological point of the whole project.
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from wroclaw_air_insights.forecast import baseline, features, model
 
@@ -97,6 +98,76 @@ def test_cross_validate_returns_one_mae_per_fold():
     cv = model.cross_validate(frame, "RandomForest", n_splits=3)
     assert len(cv["fold_mae"]) == 3
     assert cv["mae_mean"] >= 0
+
+
+# --- Skill score & the metadata contract the report reads --------------------
+@pytest.mark.parametrize(
+    "model_rmse,reference_rmse,expected",
+    [(0.0, 4.0, 1.0), (2.0, 4.0, 0.75), (4.0, 4.0, 0.0), (8.0, 4.0, -3.0)],
+    ids=["perfect", "half_the_error", "no_better", "worse"],
+)
+def test_skill_score_is_the_share_of_squared_error_removed(
+    model_rmse, reference_rmse, expected
+):
+    assert model.skill_score(model_rmse, reference_rmse) == pytest.approx(expected)
+
+
+def test_skill_score_returns_zero_instead_of_dividing_by_a_perfect_reference():
+    # A flawless reference leaves nothing to improve on; the report still needs a number.
+    assert model.skill_score(2.0, 0.0) == 0.0
+
+
+def test_skill_score_against_climatology_equals_r2():
+    # The report presents R² and the skill score as one family. That only holds if the
+    # skill score against the scored window's own mean really is R².
+    y_true = pd.Series([10.0, 14.0, 9.0, 20.0, 12.0, 7.0])
+    y_pred = pd.Series([11.0, 13.0, 10.0, 17.0, 12.5, 8.0])
+    climatology = pd.Series(y_true.mean(), index=y_true.index)
+
+    metrics = model.evaluate(y_true, y_pred)
+    clim_rmse = model.evaluate(y_true, climatology)["rmse"]
+    assert model.skill_score(metrics["rmse"], clim_rmse) == pytest.approx(
+        metrics["r2"], abs=0.01
+    )
+
+
+def test_run_experiment_reports_every_field_the_report_reads():
+    pm25, weather = _make_data()
+    frame = features.build_features(pm25, weather)
+    results, _ = model.run_experiment(frame, test_fraction=0.2)
+
+    assert {
+        "n_train", "n_test", "test_window", "test_mean_pm25", "test_std_pm25",
+        "train_std_pm25", "model", "baseline_persistence", "baseline_climatology",
+        "baseline_label", "mae_improvement_pct", "skill_vs_persistence",
+    } <= set(results)
+    assert set(results["baseline_climatology"]) == {"mae", "rmse", "r2"}
+    assert results["baseline_label"] == baseline.LABELS["persistence"]
+    assert results["test_window"]["start"] <= results["test_window"]["end"]
+
+
+def test_run_experiment_scores_climatology_on_the_same_rows_as_the_model():
+    pm25, weather = _make_data()
+    frame = features.build_features(pm25, weather)
+    results, _ = model.run_experiment(frame, test_fraction=0.2)
+    # The flat line must sit at the TRAINING mean — the only average available in
+    # advance, and the claim the report's R² paragraph rests on. Scored with hindsight
+    # (the test mean) it would look far better than a fitted model on a rising series.
+    assert results["baseline_climatology"]["mae"] > results["model"]["mae"]
+
+
+@pytest.mark.parametrize(
+    "df",
+    [
+        pd.DataFrame({"target": [1.0]}),
+        pd.DataFrame({"timestamp": pd.to_datetime([])}),
+    ],
+    ids=["no_timestamp_column", "empty"],
+)
+def test_window_bounds_is_none_when_there_is_no_window_to_name(df):
+    # The report renders the window label only when both bounds exist — this is where
+    # the missing bound comes from.
+    assert model._window_bounds(df) is None
 
 
 def test_build_inference_features_returns_future_rows():

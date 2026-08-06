@@ -52,9 +52,10 @@ winter heating season, when the WHO 24-hour guideline is regularly exceeded:
 | Ridge | 5.60 | 7.06 | −0.66 |
 
 Gradient boosting lowers MAE by **~25%** versus the naive persistence baseline; the
-random forest — kept as the interpretable default — by ~15%. Its feature importances show
-it relies on recent PM2.5 (autocorrelation) plus dispersion drivers — boundary-layer
-height, wind, temperature — so it learns the physics rather than memorizing noise:
+random forest — kept as the interpretable default — by ~15%. Its feature importances are
+explicit about where that comes from: yesterday's reading at the same hour dominates at
+**0.35**, and everything after it is a dispersion correction — temperature, boundary-layer
+height, wind. The model is persistence plus weather, and the weather is what buys the 15%:
 
 ![Feature importances](reports/figures/fig6_importances.png)
 

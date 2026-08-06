@@ -10,6 +10,15 @@ from __future__ import annotations
 import pandas as pd
 
 
+# Human-readable descriptions of each reference, so the report can name what the model
+# was compared against instead of hardcoding the rule in prose.
+LABELS = {
+    "persistence": "same hour, yesterday",
+    "seasonal": "same hour, last week",
+    "climatology": "the training-period average, every hour",
+}
+
+
 def persistence_prediction(features: pd.DataFrame) -> pd.Series:
     """Predict PM2.5[T] = PM2.5[T-24h] — yesterday, same hour."""
     return features["pm25_lag_24"]
