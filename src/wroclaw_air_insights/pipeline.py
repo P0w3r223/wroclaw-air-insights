@@ -144,12 +144,22 @@ def compare(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     feature_frame = features.build_features(pm25, weather_df)
     print(f"[compare] {len(feature_frame)} rows")
     single_split = model.compare_models(feature_frame)
-    print("[compare] single-split metrics (MAE/RMSE/R2):")
+    print("[compare] single-split metrics (MAE/RMSE/R2/bias):")
     print(json.dumps(single_split, indent=2))
-    cv = model.cross_validate(feature_frame, "RandomForest", n_splits=5)
-    print("[compare] rolling cross-validation (RandomForest):")
-    print(json.dumps(cv, indent=2))
-    return {"single_split": single_split, "cross_validation": cv}
+
+    # Every candidate, not one hardcoded name: this command exists to compare, and it used
+    # to cross-validate RandomForest while `train` deployed whatever selection picked.
+    selection = model.select_model(feature_frame, n_splits=_CV_SPLITS)
+    baseline_cv = model.cross_validate_baseline(feature_frame, n_splits=_CV_SPLITS)
+    print(f"[compare] rolling cross-validation (winner: {selection['winner']}), "
+          f"naive rule on the same folds at {baseline_cv['mae_mean']} µg/m³:")
+    print(json.dumps(selection["cv_by_model"], indent=2))
+    return {
+        "single_split": single_split,
+        "cross_validation": selection["cv_by_model"],
+        "cross_validation_baseline": baseline_cv,
+        "winner": selection["winner"],
+    }
 
 
 def _deployed_model_name() -> str:

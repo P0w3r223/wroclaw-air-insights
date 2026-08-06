@@ -45,7 +45,7 @@ def predict_next_24h(station_id: int = config.PRIMARY_STATION_ID) -> pd.DataFram
     if feats.empty:
         raise RuntimeError("could not assemble inference features (insufficient recent data)")
 
-    x = feats[bundle["feature_names"]]
+    x = model.align_features(feats, bundle["feature_names"])
     predictions = bundle["model"].predict(x)
     return pd.DataFrame(
         {

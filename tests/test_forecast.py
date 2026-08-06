@@ -434,6 +434,47 @@ def test_group_importances_fall_back_to_the_flat_line_when_a_group_is_everything
     assert result["groups"]["everything"]["retrained_delta"] > 0
 
 
+# --- The bundle's feature contract -------------------------------------------
+def test_align_features_selects_the_training_order_not_the_builders():
+    frame = pd.DataFrame({"timestamp": [1], "target": [2.0], "b": [3.0], "a": [4.0]})
+    aligned = model.align_features(frame, ["a", "b"])
+    assert list(aligned.columns) == ["a", "b"]
+
+
+def test_align_features_explains_a_stale_bundle_instead_of_raising_a_key_error():
+    # Without this, a feature change surfaces as a bare pandas KeyError from inside the
+    # serving path — and the same call builds the published report.
+    frame = pd.DataFrame({"timestamp": [1], "target": [2.0], "wind_u": [1.0]})
+    with pytest.raises(model.FeatureMismatchError) as excinfo:
+        model.align_features(frame, ["wind_direction_10m"])
+
+    message = str(excinfo.value)
+    assert "wind_direction_10m" in message      # what the model wanted
+    assert "wind_u" in message                  # what it got instead
+    assert "pipeline train" in message          # what to do about it
+    assert "target" not in message              # the target is not a feature
+    assert not isinstance(excinfo.value, KeyError)
+
+
+def test_align_features_truncates_a_long_list_of_missing_columns():
+    frame = pd.DataFrame({"timestamp": [1]})
+    with pytest.raises(model.FeatureMismatchError) as excinfo:
+        model.align_features(frame, [f"feature_{i}" for i in range(10)])
+    assert "+4 more" in str(excinfo.value)
+
+
+def test_train_forecaster_uses_the_registry_hyperparameters():
+    # One definition of the forest, so the notebook's model and the deployable candidate
+    # cannot drift apart.
+    pm25, weather = _make_data()
+    frame = features.build_features(pm25, weather)
+    x, y = features.split_xy(frame)
+    trained = model.train_forecaster(x, y)
+    registry = model.build_models()["RandomForest"]
+    assert trained.get_params()["n_estimators"] == registry.get_params()["n_estimators"]
+    assert trained.get_params()["min_samples_leaf"] == registry.get_params()["min_samples_leaf"]
+
+
 def test_save_load_model_roundtrip(tmp_path):
     pm25, weather = _make_data(400)
     frame = features.build_features(pm25, weather)

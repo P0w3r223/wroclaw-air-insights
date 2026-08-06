@@ -191,23 +191,28 @@ the freshest observation available is a full day stale. Rebuilding the same matr
 shorter horizons (lags floored at the horizon, so nothing leaks) and scoring the naive rule
 **on the same folds** as the model:
 
-| Lead | Model CV MAE | Naive CV MAE | Model vs naive |
-|------|:------------:|:------------:|:--------------:|
-| 1 h  | 4.14 ± 0.97 | 3.75 | **−10.3%** |
-| 3 h  | 5.43 ± 1.75 | 5.52 | +1.6% |
-| 6 h  | 6.02 ± 2.09 | 7.20 | +16.5% |
-| 12 h | 6.56 ± 2.52 | 8.52 | +23.0% |
-| 24 h | 6.97 ± 2.55 | 8.61 | +19.1% |
+| Lead | Naive CV MAE | Ridge | HistGradientBoosting | RandomForest | Best vs naive |
+|------|:------------:|:-----:|:--------------------:|:------------:|:-------------:|
+| 1 h  | **3.75** | 3.76 | 4.14 | 4.02 | −0.2% (naive) |
+| 3 h  | 5.52 | **5.23** | 5.43 | 5.39 | +5.2% |
+| 6 h  | 7.20 | 6.37 | **6.02** | 6.22 | +16.5% |
+| 12 h | 8.52 | — | **6.56** | — | +23.0% |
+| 24 h | 8.61 | 8.19 | **6.97** | 7.18 | +19.1% |
 
-The horizon moves MAE by 2.8 µg/m³ — thirty times what any feature moved it. And the second
-column carries a finding of its own: **below about 3 hours the model loses to persistence.**
-At a 1h lead "the same as an hour ago" beats it by 10%. Machine learning earns its keep here
-only from roughly 6 hours out, which is worth saying out loud on a page that presents a
-model as an improvement over a naive rule.
+The horizon moves MAE by 2.8 µg/m³ — thirty times what any feature moved it.
 
-This reshapes item 5 rather than confirming it. Adding lead time as a feature is not just a
-near-term accuracy win; the honest version also needs a per-lead baseline, because one MAE
-currently describes 24 tasks whose reference predictor is only correct for the last of them.
+*(Second revision of this table. The first version scored only HistGradientBoosting and
+concluded "below about 3 hours the model loses to persistence, by 10% at a 1h lead". That
+was a property of one candidate, not of the problem. Ridge ties the naive rule at 1h — it
+loses by 0.008 µg/m³, a rounding error, not 10% — and beats it by 5.2% at 3h. The crossover
+is at lead 1, not lead 3.)*
+
+**The correction matters more than the number it replaced,** because of what the full table
+shows: the winning family *changes with the lead*. Ridge takes 1–3h, HistGradientBoosting
+takes 6h and beyond. A single model with lead time as a feature has to compromise across a
+range where different model families win, and a lead feature alone cannot express "be a
+linear extrapolator at 1h and a gradient-boosted tree at 24h". Item 5's proposed shape is
+therefore not obviously the right one — see the entry itself.
 
 1c. **A first correction fell out of measuring the above — now fixed.** Scoring the naive
     rule fold-by-fold required `cross_validate_baseline`, which did not exist. It did not
@@ -278,13 +283,34 @@ currently describes 24 tasks whose reference predictor is only correct for the l
    currently describes 24 different tasks. The sweep above prices the near-term hours at
    ~2.8 µg/m³, against ≤0.09 for the two feature ideas that were rejected.
 
-   Two conditions the measurement attached to it. First, **a per-lead baseline is part of
-   the work, not a follow-up**: the single persistence row uses `pm25_lag_24`, which is the
-   right reference for lead 24 and the wrong one for every other lead. Second, the page has
-   to state that below ~3h the naive rule wins — a multi-horizon forecast that quietly
-   serves a model where persistence is better would be a regression dressed as a feature.
-   Blending or switching at short leads is the likely answer; either way it is a decision
-   the page should show rather than hide.
+   **Verified before starting, and it is a LARGE task standing on two untested assumptions.**
+
+   - *The 2.8 µg/m³ is an upper bound, not a forecast.* It was measured with one specialist
+     model per horizon. This item proposes one model learning 24 tasks at once, which is a
+     different and normally weaker design. The number cannot be carried across without
+     measuring the design that would actually ship.
+   - *A lead feature may be the wrong shape.* The revised sweep shows the winning family
+     changing with the lead — Ridge at 1–3h, HistGradientBoosting from 6h. One model plus a
+     lead column cannot express that; per-lead selection might be the real answer, and it is
+     a different implementation.
+   - *Cost is bounded by one candidate.* An (origin × lead) matrix is 206 016 rows × 22
+     columns. Measured, one fit: HistGradientBoosting **3.45 s**, RandomForest **90 s** on 12
+     cores. Five-fold CV over the registry is ~17 s of gradient boosting against ~7.5 min of
+     forest locally, and a GitHub runner has 4 vCPUs. The daily refresh job runs ~9 min today.
+     RandomForest has never won a selection and loses at every lead measured above, so the
+     scaling decision it forces should be made deliberately rather than discovered in a
+     40-minute CI run.
+   - *Blast radius.* `baseline.persistence_prediction` returns `pm25_lag_24` outright, so the
+     current baseline is simply wrong for 23 of 24 leads — the per-lead baseline is a
+     prerequisite, not a follow-up. Lags are computed relative to valid time `T`; an
+     (origin, lead) matrix needs them relative to the origin, which rewrites `_assemble`,
+     `build_features`, `build_inference_features`, `_BASELINES`, `compare_models`,
+     `cross_validate_baseline`, `run_experiment`, `serving` and the report's single-MAE
+     framing. Above five files and a restructure: LARGE by the project's own rule.
+
+   Sequenced accordingly: prerequisites first (items 11–13, done), then a pilot that measures
+   one-model-plus-lead against per-horizon specialists, then the restructure — or not,
+   depending on what the pilot says.
 
 6. **Prediction intervals.** sklearn ≥1.5 is pinned, so
    `HistGradientBoostingRegressor(loss="quantile")` is two extra fits — but on RF it needs
@@ -312,25 +338,31 @@ currently describes 24 tasks whose reference predictor is only correct for the l
     Flagged during test writing; the helper tests replicate that step and cannot catch it
     regressing.
 
-### Correctness debts found while measuring the above
+### Correctness debts found while measuring the above — all three done
 
-11. **A feature change silently invalidates the saved bundle.** `serving.predict_next_24h`
-    does `feats[bundle["feature_names"]]`; add or rename a column and a stale
-    `models/pm25_forecaster.joblib` fails with a bare pandas `KeyError` from inside the
-    serving path — and `report.py` runs the same call, so the failure surfaces as a broken
-    Pages build with no explanation. CI retrains daily and self-heals; a local run does not.
-    Cheap fix: compare the built feature set against `bundle["feature_names"]` and raise a
-    message that names the missing columns and says "retrain".
+*Cleared as prerequisites for item 5: the first is required by any change to the feature
+set, and the other two are the places where "which RandomForest" and "which model" had
+already drifted.*
 
-12. **Two definitions of the same RandomForest.** `train_forecaster` hardcodes
-    `n_estimators=300, min_samples_leaf=2` and `build_models` hardcodes them again. Since
-    `select_model` landed, the pipeline only ever uses `build_models`, so `train_forecaster`
-    is reachable from one test and nothing else — two places to edit, one of which no longer
-    affects anything shipped.
+11. **A feature change silently invalidates the saved bundle — fixed.** `serving` did
+    `feats[bundle["feature_names"]]`, so renaming a column made a stale
+    `models/pm25_forecaster.joblib` fail with a bare pandas `KeyError` from inside the
+    serving path — and `report.py` makes the same call, so it surfaced as a broken Pages
+    build with no explanation. `model.align_features` now raises `FeatureMismatchError`
+    naming what the model wanted, what the builder produces instead, and the retrain
+    command. Verified against the real saved bundle: it passes today's contract and fires
+    correctly when `wind_direction_10m` is renamed — the exact scenario item 5 would cause.
 
-13. **`pipeline compare` still hardcodes `"RandomForest"`** for its cross-validation block
-    while `train` deploys whatever `select_model` picks. The command whose entire purpose is
-    comparison reports CV for a model that may not be the one running.
+12. **Two definitions of the same RandomForest — fixed.** `train_forecaster` restated
+    `n_estimators=300, min_samples_leaf=2`, which `build_models` also owns. Since
+    `select_model` landed, only `build_models` reaches anything shipped, so the copy was a
+    definition nothing read, free to drift. `train_forecaster` now takes the candidate from
+    the registry and keeps its one real job: giving the notebook a concrete forest, the only
+    estimator here that exposes impurity importances.
+
+13. **`pipeline compare` hardcoded `"RandomForest"` — fixed.** It cross-validated one named
+    model while `train` deployed whatever `select_model` picked. It now reports CV for every
+    candidate, names the winner, and prints the naive rule scored on the same folds.
 
 ### Re-scoped
 
