@@ -45,6 +45,17 @@ def evaluate(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
     }
 
 
+def improvement_pct(model_mae: float, reference_mae: float) -> float:
+    """How much smaller the model's average miss is than a reference's, in percent.
+
+    Both arguments must come from the same rows — a model's year-round error against a
+    reference's summer error is not an improvement, it is two unrelated numbers divided.
+    """
+    if not reference_mae:
+        return 0.0
+    return round(100 * (reference_mae - model_mae) / reference_mae, 1)
+
+
 def skill_score(model_rmse: float, reference_rmse: float) -> float:
     """Fraction of a reference predictor's squared error that the model removes.
 
@@ -229,8 +240,7 @@ def run_experiment(
     climatology = pd.Series(y_train.mean(), index=y_test.index)
     clim_metrics = evaluate(y_test, climatology)
 
-    base_mae = base_metrics["mae"]
-    improvement = round(100 * (base_mae - model_metrics["mae"]) / base_mae, 1) if base_mae else 0.0
+    improvement = improvement_pct(model_metrics["mae"], base_metrics["mae"])
 
     results = {
         "n_train": len(train_df),
@@ -322,6 +332,36 @@ def select_model(
         "runner_up": ranked[1] if len(ranked) > 1 else None,
         "cv_by_model": scores,
         "selected_on": f"rolling-origin CV MAE over {n_splits} folds",
+    }
+
+
+def cross_validate_baseline(
+    features_df: pd.DataFrame,
+    baseline_name: str = "baseline_persistence",
+    n_splits: int = 5,
+) -> dict:
+    """Score a naive rule on the same rolling folds :func:`cross_validate` uses.
+
+    Without this the project could only compare model against baseline on the single
+    chronological split — one summer window — while headlining the year-round CV error.
+    Those two numbers describe different periods, and quoting a summer improvement next to
+    an all-seasons error overstates the model: persistence is at its best in calm summer
+    air, so the gap it leaves is widest exactly where the split does not look.
+    """
+    predict_fn = _BASELINES[baseline_name]
+    x_all, y_all = features.split_xy(features_df)
+    splitter = TimeSeriesSplit(n_splits=n_splits)
+
+    fold_mae = [
+        float(mean_absolute_error(y_all.iloc[idx], predict_fn(features_df.iloc[idx])))
+        for _, idx in splitter.split(x_all)
+    ]
+    return {
+        "baseline": baseline_name,
+        "n_splits": n_splits,
+        "fold_mae": [round(m, 3) for m in fold_mae],
+        "mae_mean": round(float(np.mean(fold_mae)), 3),
+        "mae_std": round(float(np.std(fold_mae)), 3),
     }
 
 

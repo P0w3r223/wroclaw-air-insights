@@ -88,6 +88,15 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     print(f"[train] model selection ({selection['selected_on']}) -> {winner}")
     print(json.dumps(selection["cv_by_model"], indent=2))
 
+    # The naive rule scored on the SAME folds as the winner, so the improvement the report
+    # prints describes the same year the headline error describes. Measured on the single
+    # summer split alone the same model looks ~6 points better than it is.
+    cv_model = selection["cv_by_model"][winner]
+    cv_baseline = model.cross_validate_baseline(feature_frame, n_splits=_CV_SPLITS)
+    cv_improvement = model.improvement_pct(cv_model["mae_mean"], cv_baseline["mae_mean"])
+    print(f"[train] year-round: model {cv_model['mae_mean']} vs naive "
+          f"{cv_baseline['mae_mean']} µg/m³ -> {cv_improvement}% better")
+
     results, _ = model.run_experiment(feature_frame, model_name=winner)
     print("[train] results:")
     print(json.dumps(results, indent=2))
@@ -102,7 +111,9 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
         metadata={
             **results,  # split metrics, both references, window bounds, skill
             "metrics": results["model"],  # alias kept for readers of the saved bundle
-            "cross_validation": selection["cv_by_model"][winner],
+            "cross_validation": cv_model,
+            "cross_validation_baseline": cv_baseline,
+            "mae_improvement_pct_cv": cv_improvement,
             "selection": selection,
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
