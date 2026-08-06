@@ -187,6 +187,105 @@ def test_build_inference_features_returns_future_rows():
     assert not feats[features.feature_columns(feats)].isna().any().any()
 
 
+# --- Importance: grouping, and measurement on held-out rows ------------------
+def _make_signal_data(hours: int = 700, seed: int = 0):
+    """PM2.5 driven by the weather at the same hour, with lags carrying no extra signal.
+
+    Deliberately the opposite of ``_make_data``: here the answer is known in advance, so
+    an importance measurement that reports it backwards is failing rather than surprising.
+    """
+    ts = pd.date_range(_ORIGIN, periods=hours, freq="h")
+    rng = np.random.default_rng(seed)
+    temperature = rng.normal(10.0, 5.0, hours)
+    pm25 = pd.DataFrame(
+        {"timestamp": ts, "value": 30.0 - 1.5 * temperature + rng.normal(0, 1.0, hours)}
+    )
+    weather = pd.DataFrame(
+        {
+            "timestamp": ts,
+            "temperature_2m": temperature,
+            "wind_speed_10m": rng.normal(3.0, 1.0, hours),
+        }
+    )
+    return pm25, weather
+
+
+def test_feature_groups_partition_every_feature_exactly_once():
+    pm25, weather = _make_data()
+    frame = features.build_features(pm25, weather)
+    cols = features.feature_columns(frame)
+    groups = features.feature_groups(frame.columns)
+
+    members = [c for group in groups.values() for c in group]
+    assert sorted(members) == sorted(cols)
+    assert len(members) == len(set(members))
+
+
+def test_feature_groups_route_an_unknown_weather_column_to_weather():
+    # Weather is "whatever is left", so a new config.WEATHER_HOURLY_VARS entry must land
+    # in the weather group without this function knowing its name.
+    groups = features.feature_groups(
+        ["timestamp", "target", "pm25_lag_24", "hour_sin", "boundary_layer_height", "ozone_ppb"]
+    )
+    assert groups["weather"] == ["boundary_layer_height", "ozone_ppb"]
+    assert groups["pm25_history"] == ["pm25_lag_24"]
+    assert groups["calendar"] == ["hour_sin"]
+
+
+def test_permutation_importances_rank_the_column_the_target_was_built_from():
+    pm25, weather = _make_signal_data()
+    frame = features.build_features(pm25, weather)
+    train_df, test_df = model.time_based_split(frame)
+    x_train, y_train = features.split_xy(train_df)
+    x_test, y_test = features.split_xy(test_df)
+    estimator = model.build_models()["HistGradientBoosting"]
+    estimator.fit(x_train, y_train)
+
+    ranked = model.permutation_importances(estimator, x_test, y_test, n_repeats=5)
+    assert set(ranked.index) == set(features.feature_columns(frame))
+    assert ranked.idxmax() == "temperature_2m"
+
+
+def test_group_importances_report_the_source_the_target_actually_depends_on():
+    pm25, weather = _make_signal_data()
+    frame = features.build_features(pm25, weather)
+    result = model.group_importances(frame, "HistGradientBoosting", n_repeats=5)
+
+    weather_group = result["groups"]["weather"]
+    history_group = result["groups"]["pm25_history"]
+    assert weather_group["retrained_delta"] > history_group["retrained_delta"]
+    assert weather_group["permuted_delta"] > history_group["permuted_delta"]
+    # Both deltas describe the same reference, so the full model must be the better one.
+    assert result["full_mae"] < weather_group["retrained_mae"]
+    assert result["full_mae"] < result["persistence_mae"]
+
+
+def test_group_importances_expose_the_fields_the_narrative_quotes():
+    pm25, weather = _make_signal_data()
+    frame = features.build_features(pm25, weather)
+    result = model.group_importances(frame, "HistGradientBoosting", n_repeats=3)
+
+    assert result["model_name"] == "HistGradientBoosting"
+    assert {"full_mae", "persistence_mae", "test_window", "groups"} <= set(result)
+    for measured in result["groups"].values():
+        assert {
+            "n_features", "permuted_mae", "permuted_delta",
+            "retrained_mae", "retrained_delta",
+        } == set(measured)
+
+
+def test_group_importances_fall_back_to_the_flat_line_when_a_group_is_everything():
+    # Dropping every column leaves nothing to fit; the result must still be a number the
+    # caller can compare, not a crash inside sklearn.
+    pm25, weather = _make_signal_data(400)
+    frame = features.build_features(pm25, weather)
+    all_columns = features.feature_columns(frame)
+    result = model.group_importances(
+        frame, "Ridge", groups={"everything": all_columns}, n_repeats=2
+    )
+    assert result["groups"]["everything"]["retrained_delta"] > 0
+
+
 def test_save_load_model_roundtrip(tmp_path):
     pm25, weather = _make_data(400)
     frame = features.build_features(pm25, weather)

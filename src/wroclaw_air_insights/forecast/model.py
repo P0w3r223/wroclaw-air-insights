@@ -13,6 +13,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
+from sklearn.inspection import permutation_importance
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit
@@ -74,10 +75,136 @@ def train_forecaster(
 def feature_importances(
     model: RandomForestRegressor, feature_names: list[str]
 ) -> pd.Series:
-    """Feature importances as a descending Series (for the analysis narrative)."""
+    """Impurity-based importances as a descending Series.
+
+    **Read this with care, and never on its own.** The score is computed on *training*
+    rows from how often a column was split on, which inflates continuous high-cardinality
+    features and says nothing about held-out accuracy. On this dataset it ranks
+    ``pm25_lag_24`` first at 0.35 while removing the whole PM2.5-history group costs the
+    same 0.7 µg/m³ as removing all nine weather columns. Kept because the contrast with
+    :func:`group_importances` is itself the finding — not because it answers the question.
+    Tree ensembles only; ``HistGradientBoostingRegressor`` exposes no such attribute.
+    """
     return pd.Series(model.feature_importances_, index=feature_names).sort_values(
         ascending=False
     )
+
+
+# --- Importance measured on held-out rows -------------------------------------
+def permutation_importances(
+    estimator: object,
+    x_test: pd.DataFrame,
+    y_test: pd.Series,
+    n_repeats: int = 10,
+    random_state: int = 42,
+) -> pd.Series:
+    """Per-column MAE degradation (µg/m³) when that column is shuffled on held-out rows.
+
+    Answers "how much worse is the forecast without this information?" in the report's own
+    unit, and works for any estimator. The caveat is correlation: shuffling one of several
+    near-duplicate columns leaves its information in the rest, so a low score here means
+    "redundant", not "useless" — see :func:`group_importances`.
+    """
+    result = permutation_importance(
+        estimator,
+        x_test,
+        y_test,
+        n_repeats=n_repeats,
+        random_state=random_state,
+        scoring="neg_mean_absolute_error",
+        n_jobs=-1,
+    )
+    return pd.Series(result.importances_mean, index=list(x_test.columns)).sort_values(
+        ascending=False
+    )
+
+
+def _permute_group(
+    estimator: object,
+    x_test: pd.DataFrame,
+    y_test: pd.Series,
+    columns: list[str],
+    n_repeats: int,
+    rng: np.random.Generator,
+) -> float:
+    """Mean MAE when every column of the group is shuffled together (one shared order)."""
+    scores = []
+    for _ in range(n_repeats):
+        shuffled = x_test.copy()
+        shuffled[columns] = x_test[columns].to_numpy()[rng.permutation(len(x_test))]
+        scores.append(float(mean_absolute_error(y_test, estimator.predict(shuffled))))
+    return float(np.mean(scores))
+
+
+def group_importances(
+    features_df: pd.DataFrame,
+    model_name: str,
+    groups: dict[str, list[str]] | None = None,
+    test_fraction: float = 0.2,
+    n_repeats: int = 10,
+    random_state: int = 42,
+) -> dict:
+    """What the model loses without each source of information, two ways.
+
+    ``model_name`` is deliberately required: an importance ranking belongs to one specific
+    estimator, and publishing one model's ranking beside another model's metrics is how the
+    project's own README came to describe a forecaster it no longer deploys.
+
+    Two measurements per group, because they disagree in an informative way. *Permuted*
+    destroys the group at prediction time and leaves the fitted model intact — it shows what
+    the trained model leans on. *Retrained* refits without the group entirely — it shows what
+    the information is worth once the model is free to compensate with what remains. A group
+    that is cheap to permute but expensive to drop was carrying information the rest of the
+    matrix also holds.
+    """
+    train_df, test_df = time_based_split(features_df, test_fraction)
+    x_train, y_train = features.split_xy(train_df)
+    x_test, y_test = features.split_xy(test_df)
+    groups = groups or features.feature_groups(x_train.columns)
+
+    estimator = build_models(random_state)[model_name]
+    estimator.fit(x_train, y_train)
+    full_mae = float(mean_absolute_error(y_test, estimator.predict(x_test)))
+
+    rng = np.random.default_rng(random_state)
+    measured: dict[str, dict[str, float]] = {}
+    for name, columns in groups.items():
+        present = [c for c in columns if c in x_train.columns]
+        if not present:
+            continue
+        permuted = _permute_group(estimator, x_test, y_test, present, n_repeats, rng)
+        remaining = [c for c in x_train.columns if c not in present]
+        if remaining:
+            refit = build_models(random_state)[model_name]
+            refit.fit(x_train[remaining], y_train)
+            retrained = float(mean_absolute_error(y_test, refit.predict(x_test[remaining])))
+        else:
+            # Dropping every feature leaves nothing to fit; the flat training mean is the
+            # only prediction left, and it is already reported as the climatology baseline.
+            flat_line = pd.Series(y_train.mean(), index=y_test.index)
+            retrained = float(mean_absolute_error(y_test, flat_line))
+        measured[name] = {
+            "n_features": len(present),
+            "permuted_mae": round(permuted, 3),
+            "permuted_delta": round(permuted - full_mae, 3),
+            "retrained_mae": round(retrained, 3),
+            "retrained_delta": round(retrained - full_mae, 3),
+        }
+
+    return {
+        "model_name": model_name,
+        "test_window": _window_bounds(test_df),
+        "full_mae": round(full_mae, 3),
+        # The reference every delta should be read against: a group whose removal still
+        # leaves the model under this number was never what made the model worth running.
+        "persistence_mae": round(
+            float(mean_absolute_error(y_test, baseline.persistence_prediction(test_df))), 3
+        ),
+        "n_repeats": n_repeats,
+        "groups": dict(
+            sorted(measured.items(), key=lambda kv: kv[1]["retrained_delta"], reverse=True)
+        ),
+    }
 
 
 def run_experiment(
