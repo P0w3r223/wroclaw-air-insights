@@ -93,6 +93,12 @@ def _number(value: object) -> float | None:
     return None
 
 
+def _fmt_signed(value: object, digits: int = 2) -> str:
+    """Format a signed metric, keeping the ``+`` — for bias the direction is the point."""
+    number = _number(value)
+    return f"{number:+.{digits}f}" if number is not None else "n/a"
+
+
 def _row(label: str, metrics: dict, css_class: str = "") -> str:
     """One predictor row, or nothing at all when the metrics were never recorded."""
     if not metrics:
@@ -103,6 +109,7 @@ def _row(label: str, metrics: dict, css_class: str = "") -> str:
       <td>{_fmt(metrics.get('mae'))}</td>
       <td>{_fmt(metrics.get('rmse'))}</td>
       <td>{_fmt(metrics.get('r2'))}</td>
+      <td>{_fmt_signed(metrics.get('bias'))}</td>
     </tr>
 """
 
@@ -127,13 +134,15 @@ def _metrics_table(metadata: dict) -> str:
     )
     return f"""  <table class="metrics">
     <thead>
-      <tr><th>Predictor</th><th>MAE ↓</th><th>RMSE ↓</th><th>R² ↑</th></tr>
+      <tr><th>Predictor</th><th>MAE ↓</th><th>RMSE ↓</th><th>R² ↑</th><th>Bias →0</th></tr>
     </thead>
     <tbody>
 {rows}    </tbody>
   </table>
   <p class="hint">All three scored on the same held-out window{when}.
-  MAE and RMSE are in µg/m³ (↓ lower is better); R² is a ratio (↑ higher is better).</p>"""
+  MAE, RMSE and bias are in µg/m³ (↓ lower is better); R² is a ratio (↑ higher is better).
+  Bias is the <em>signed</em> average error — positive means the forecast runs high — and
+  it is the one column where zero, not lower, is the target.</p>"""
 
 
 def _verdict(metadata: dict) -> str:
@@ -188,6 +197,90 @@ def _verdict(metadata: dict) -> str:
         caveat = ""
 
     return f'<p class="verdict">{headline}{caveat}</p>'
+
+
+def _regime_row(label: str, model_regime: dict, naive_regime: dict) -> str:
+    """One regime row: the model beside the naive rule, error and direction for each."""
+    count = model_regime.get("n")
+    hours = f"{count:,} hours" if isinstance(count, int) else "—"
+    return f"""    <tr>
+      <td>{label}<br><span class="hint">{hours}</span></td>
+      <td>{_fmt(model_regime.get('mae'))}</td>
+      <td>{_fmt_signed(model_regime.get('bias'))}</td>
+      <td>{_fmt(naive_regime.get('mae'))}</td>
+      <td>{_fmt_signed(naive_regime.get('bias'))}</td>
+    </tr>
+"""
+
+
+def _detection_line(detection: dict, elevated: dict, threshold: float, naive: dict) -> str:
+    """How many of the polluted hours the forecast actually called, and at what cost."""
+    hit_rate = _number(detection.get("hit_rate"))
+    false_alarm = _number(detection.get("false_alarm_ratio"))
+    if hit_rate is None:
+        return ""
+
+    naive_hit = _number((naive or {}).get("hit_rate"))
+    against = f" (the naive rule: {100 * naive_hit:.0f}%)" if naive_hit is not None else ""
+    total = elevated.get("n")
+    counted = f"{total:,} hours" if isinstance(total, int) else "the hours"
+
+    cost = ""
+    if false_alarm is not None:
+        naive_false = _number((naive or {}).get("false_alarm_ratio"))
+        naive_cost = (
+            f", against {100 * naive_false:.0f}% for the naive rule"
+            if naive_false is not None
+            else ""
+        )
+        cost = (
+            f" The warnings are not free: <strong>{100 * false_alarm:.0f}%</strong> of the "
+            f"hours it flagged turned out to be below the line{naive_cost}."
+        )
+    return (
+        f"<p class=\"skill\">Of the {counted} that actually reached "
+        f"{threshold:.0f} µg/m³, the forecast flagged "
+        f"<strong>{100 * hit_rate:.0f}%</strong>{against}.{cost}</p>"
+    )
+
+
+def _regime_section(metadata: dict) -> str:
+    """Error split at the WHO guideline level — the hours the forecast exists for.
+
+    An average over every hour is dominated by calm ones, because calm ones are most of
+    them. Splitting at the line the chart already draws shows the two failure directions
+    separately, and they turn out to point opposite ways: high when the air is clean, low
+    when it is not. That is regression toward the mean, and a single bias figure — which
+    nets the two against each other — makes it invisible.
+    """
+    regime = metadata.get("regime") or {}
+    naive = metadata.get("regime_persistence") or {}
+    clean, elevated = regime.get("clean") or {}, regime.get("elevated") or {}
+    if not clean.get("n") and not elevated.get("n"):
+        return ""
+
+    threshold = _number(regime.get("threshold")) or config.PM25_WHO_DAILY
+    rows = _regime_row(
+        f"Below {threshold:.0f} µg/m³", clean, (naive.get("clean") or {})
+    ) + _regime_row(
+        f"At or above {threshold:.0f} µg/m³", elevated, (naive.get("elevated") or {})
+    )
+    detection = _detection_line(
+        regime.get("detection") or {}, elevated, threshold, naive.get("detection") or {}
+    )
+
+    return f"""  <h3>How it behaves when the air is actually bad</h3>
+  <table class="metrics regimes">
+    <thead>
+      <tr><th>Hours</th><th>MAE ↓</th><th>Bias →0</th><th>Naive MAE</th><th>Naive bias</th></tr>
+    </thead>
+    <tbody>
+{rows}    </tbody>
+  </table>
+  <p class="hint">Split by what was <em>measured</em>, not by what was predicted.
+  {threshold:.0f} µg/m³ is the WHO 24-hour guideline level, used here as a reference for
+  hourly readings — not as a compliance test, which would apply to daily means.</p>
+  {detection}"""
 
 
 def _year_round_skill(metadata: dict) -> str:
@@ -451,6 +544,7 @@ def generate_report(
     metrics_table = _metrics_table(metadata)
     verdict = _verdict(metadata)
     skill_line = _skill_line(metadata)
+    regime_section = _regime_section(metadata)
     glossary = _glossary(metadata)
     n_test = metadata.get("n_test")
     tested_on = f" ({n_test:,} held-out hours)" if isinstance(n_test, int) else ""
@@ -487,6 +581,10 @@ def generate_report(
   .metrics th + th, .metrics td + td {{ text-align: right;
                 font-variant-numeric: tabular-nums; width: 6.5rem; }}
   .metrics tr.deployed td {{ font-weight: 600; }}
+  .metrics.regimes th + th, .metrics.regimes td + td {{ width: 5.5rem; }}
+  .metrics.regimes td:nth-child(4), .metrics.regimes td:nth-child(5) {{ color: #667085; }}
+  .metrics.regimes td .hint {{ font-size: 0.78rem; }}
+  h3 {{ font-weight: 600; font-size: 1.02rem; margin: 28px 0 10px; }}
   .hint {{ color: #667085; font-size: 0.82rem; margin: 8px 0 0; }}
   .skill {{ margin: 14px 0 0; font-size: 0.95rem; }}
   .verdict {{ background: #f6f8fc; border-left: 3px solid {_ACCENT};
@@ -527,6 +625,7 @@ def generate_report(
   {verdict}
 {metrics_table}
   {skill_line}
+{regime_section}
 {glossary}
 </div>
 
