@@ -92,6 +92,39 @@ def test_compare_models_scores_baselines_and_models():
     assert set(results["RandomForest"]) == {"mae", "rmse", "r2"}
 
 
+def test_cross_validate_baseline_scores_the_naive_rule_on_the_same_folds():
+    # value == hour index, so "same hour yesterday" is always exactly 24 low. A baseline
+    # scored on different rows than the model is the comparison this function exists to
+    # prevent, and an exact expected value is how that stays pinned.
+    pm25, weather = _make_data()
+    frame = features.build_features(pm25, weather)
+    cv = model.cross_validate_baseline(frame, "baseline_persistence", n_splits=3)
+
+    assert cv["baseline"] == "baseline_persistence"
+    assert len(cv["fold_mae"]) == 3
+    assert cv["mae_mean"] == pytest.approx(24.0)
+    assert cv["mae_std"] == pytest.approx(0.0)
+
+
+def test_cross_validate_baseline_uses_the_same_fold_boundaries_as_the_model():
+    pm25, weather = _make_data()
+    frame = features.build_features(pm25, weather)
+    model_cv = model.cross_validate(frame, "Ridge", n_splits=3)
+    baseline_cv = model.cross_validate_baseline(frame, n_splits=3)
+    assert len(model_cv["fold_mae"]) == len(baseline_cv["fold_mae"])
+
+
+@pytest.mark.parametrize(
+    "model_mae,reference_mae,expected",
+    [(3.0, 6.0, 50.0), (6.0, 6.0, 0.0), (9.0, 6.0, -50.0), (1.0, 0.0, 0.0)],
+    ids=["half_the_error", "no_better", "worse", "flawless_reference"],
+)
+def test_improvement_pct_is_the_share_of_the_reference_miss_removed(
+    model_mae, reference_mae, expected
+):
+    assert model.improvement_pct(model_mae, reference_mae) == pytest.approx(expected)
+
+
 def test_cross_validate_returns_one_mae_per_fold():
     pm25, weather = _make_data()
     frame = features.build_features(pm25, weather)

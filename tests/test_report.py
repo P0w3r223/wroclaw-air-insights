@@ -272,6 +272,52 @@ def test_skill_line_renders_nothing_without_a_comparison(metadata):
     assert report._skill_line(metadata) == ""
 
 
+# --- _skill_line: the year-round comparison, added after the window one was found
+# --- to be describing a different period than the headline error above it.
+_YEAR_ROUND = {
+    "cross_validation_baseline": {"n_splits": 5, "mae_mean": 8.61, "mae_std": 2.1},
+    "mae_improvement_pct_cv": 24.5,
+}
+
+
+def test_skill_line_leads_with_the_comparison_the_headline_error_comes_from():
+    html = report._skill_line(_fresh_metadata(**_YEAR_ROUND))
+    assert html.index("same rolling folds") < html.index("held-out window")
+    assert "<strong>24.5% smaller</strong>" in html
+    assert "6.50 against 8.61 µg/m³" in html
+
+
+def test_skill_line_marks_the_window_figure_as_the_second_one_when_both_are_present():
+    html = report._skill_line(_fresh_metadata(**_YEAR_ROUND))
+    assert "On the single held-out window in the table below, that gap is" in html
+    # The window figure must not be re-introduced as if it were the primary claim.
+    assert html.count("the model's average miss is") == 1
+
+
+def test_skill_line_keeps_the_window_wording_for_a_bundle_saved_before_this_change():
+    html = report._skill_line(_fresh_metadata())
+    assert html.startswith('<p class="skill">On the held-out window, ')
+    assert "rolling folds" not in html
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"mae_improvement_pct_cv": None},
+        {"cross_validation_baseline": {}},
+        {"cross_validation_baseline": {"mae_mean": _NAN}},
+    ],
+    ids=["no_pct", "no_baseline_cv", "nan_baseline_cv"],
+)
+def test_skill_line_drops_the_year_round_clause_when_half_of_it_is_missing(overrides):
+    html = report._skill_line(_fresh_metadata(**{**_YEAR_ROUND, **overrides}))
+    assert "rolling folds" not in html
+    assert "On the held-out window, " in html
+    assert "nan" not in html and "None" not in html
+
+
+
+
 # --- _selection_note ----------------------------------------------------------
 def test_selection_note_names_the_winner_and_every_candidate():
     html = report._selection_note(_fresh_metadata())

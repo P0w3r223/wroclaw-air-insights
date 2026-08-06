@@ -190,24 +190,42 @@ def _verdict(metadata: dict) -> str:
     return f'<p class="verdict">{headline}{caveat}</p>'
 
 
-def _skill_line(metadata: dict) -> str:
-    """State both skill scores as one family, so R² cannot be read as a stranger."""
-    skill = _number(metadata.get("skill_vs_persistence"))
-    r2 = _number((metadata.get("model") or {}).get("r2"))
-    improvement = _number(metadata.get("mae_improvement_pct"))
-    if skill is None and improvement is None:
+def _year_round_skill(metadata: dict) -> str:
+    """The model against the naive rule on the folds the headline error comes from."""
+    gain = _number(metadata.get("mae_improvement_pct_cv"))
+    model_mae = _number((metadata.get("cross_validation") or {}).get("mae_mean"))
+    naive_mae = _number((metadata.get("cross_validation_baseline") or {}).get("mae_mean"))
+    if None in (gain, model_mae, naive_mae):
         return ""
+    return (
+        f"Scored on the same rolling folds as the headline above, the model's average miss "
+        f"is <strong>{gain:.1f}% smaller</strong> than the naive rule's — "
+        f"{model_mae:.2f} against {naive_mae:.2f} µg/m³."
+    )
+
+
+def _window_skill(metadata: dict, after_year_round: bool) -> str:
+    """The same comparison on the single held-out window, plus what R² adds to it."""
+    skill = _number(metadata.get("skill_vs_persistence"))
+    improvement = _number(metadata.get("mae_improvement_pct"))
+    r2 = _number((metadata.get("model") or {}).get("r2"))
 
     parts = []
     if improvement is not None:
         parts.append(
-            f"the model's average miss is <strong>{improvement:.1f}% smaller</strong> "
+            f"that gap is <strong>{improvement:.1f}%</strong>"
+            if after_year_round
+            else f"the model's average miss is <strong>{improvement:.1f}% smaller</strong> "
             f"than the naive rule's"
         )
     if skill is not None:
         parts.append(
-            f"it removes <strong>{100 * skill:.0f}%</strong> of that rule's squared error"
+            f"the model removes <strong>{100 * skill:.0f}%</strong> of that rule's squared "
+            f"error"
         )
+    if not parts:
+        return ""
+
     if r2 is None:
         against_flat = ""
     elif r2 < 0:
@@ -222,7 +240,27 @@ def _skill_line(metadata: dict) -> str:
             f"available with hindsight — it removes just {100 * r2:.0f}%, and that second "
             f"number is exactly what R² reports."
         )
-    return f'<p class="skill">On the same window, {" and ".join(parts)}.{against_flat}</p>'
+
+    opening = (
+        " On the single held-out window in the table below, "
+        if after_year_round
+        else "On the held-out window, "
+    )
+    return f"{opening}{' and '.join(parts)}.{against_flat}"
+
+
+def _skill_line(metadata: dict) -> str:
+    """Improvement over the naive rule, every figure tied to the period it was measured on.
+
+    The year-round comparison leads. Only the window one used to be printed, directly
+    beneath a year-round headline error — which credited the model with summer's easier
+    air while quoting an all-seasons miss, two periods presented as one result.
+    """
+    year_round = _year_round_skill(metadata)
+    window = _window_skill(metadata, after_year_round=bool(year_round))
+    if not year_round and not window:
+        return ""
+    return f'<p class="skill">{year_round}{window}</p>'
 
 
 def _selection_note(metadata: dict) -> str:
