@@ -90,6 +90,12 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
         list(x_all.columns),
         metadata={
             "metrics": results["model"],
+            # The baseline numbers travel with the model: metrics are only meaningful
+            # next to the naive reference the model had to beat.
+            "baseline_metrics": results["baseline_persistence"],
+            "mae_improvement_pct": results["mae_improvement_pct"],
+            "n_train": results["n_train"],
+            "n_test": results["n_test"],
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
         },
