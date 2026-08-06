@@ -463,6 +463,26 @@ def test_align_features_truncates_a_long_list_of_missing_columns():
     assert "+4 more" in str(excinfo.value)
 
 
+def test_candidate_names_the_registry_instead_of_echoing_the_missing_key():
+    # The name can come from a saved bundle, so dropping a candidate from the registry
+    # breaks every command that reads a bundle written before the removal.
+    with pytest.raises(model.UnknownModelError) as excinfo:
+        model.candidate("GradientBoosting")
+
+    message = str(excinfo.value)
+    assert "GradientBoosting" in message
+    for offered in model.build_models():
+        assert offered in message
+    assert "pipeline train" in message
+
+
+def test_candidate_returns_a_fresh_estimator_each_time():
+    # group_importances refits the same name repeatedly; a shared instance would carry
+    # one group's fit into the next measurement.
+    first, second = model.candidate("Ridge"), model.candidate("Ridge")
+    assert first is not second
+
+
 def test_train_forecaster_uses_the_registry_hyperparameters():
     # One definition of the forest, so the notebook's model and the deployable candidate
     # cannot drift apart.

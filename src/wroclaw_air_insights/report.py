@@ -113,9 +113,14 @@ def _backtest_section(metadata: dict) -> str:
     if not chart:
         return ""
 
-    days = backtest.get("days")
-    span = f"{days} days" if isinstance(days, int) else "the final stretch"
-    hours = len(backtest["timestamps"])
+    # Headline the span the data actually covers, not the span that was requested: a test
+    # window shorter than BACKTEST_WINDOW_DAYS would otherwise be announced as 14 days.
+    stamps = backtest["timestamps"]
+    covered = (
+        datetime.fromisoformat(stamps[-1]) - datetime.fromisoformat(stamps[0])
+    ).days
+    span = f"{covered} days" if covered >= 2 else ("day" if covered == 1 else "hours")
+    hours = len(stamps)
     return f"""  <h3>The last {span} of the test window, hour by hour</h3>
   <img src="data:image/png;base64,{chart}" alt="Forecast against measured PM2.5">
   <p class="hint">{hours:,} hours the model had never seen. These come from the
