@@ -19,6 +19,8 @@ project's methodology — see CLAUDE.md.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
 import pandas as pd
 
@@ -27,6 +29,10 @@ from wroclaw_air_insights import config
 DEFAULT_LAGS_H = (24, 48, 168)  # yesterday, two days ago, last week (same hour)
 ROLL_WINDOW_H = 24
 TARGET_COLUMN = "target"
+PM25_FEATURE_PREFIX = "pm25_"
+CALENDAR_FEATURES = (
+    "hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend",
+)
 
 
 def _add_calendar_features(frame: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
@@ -126,6 +132,27 @@ def build_inference_features(
 def feature_columns(features: pd.DataFrame) -> list[str]:
     """Model feature names (everything except the timestamp and the target)."""
     return [c for c in features.columns if c not in (TARGET_COLUMN, "timestamp")]
+
+
+def feature_groups(columns: Iterable[str]) -> dict[str, list[str]]:
+    """Group feature columns by where the information comes from.
+
+    Individual features are not independent — the five PM2.5-history columns are
+    near-duplicates of one another — so any importance measured one column at a time
+    splits credit between them and understates the group. Grouping by origin is what
+    makes the question answerable: *what would the model lose without this source?*
+
+    Weather is defined as "whatever is left", so adding a variable to
+    ``config.WEATHER_HOURLY_VARS`` joins the right group without touching this function.
+    """
+    cols = [c for c in columns if c not in (TARGET_COLUMN, "timestamp")]
+    grouped = {
+        "pm25_history": [c for c in cols if c.startswith(PM25_FEATURE_PREFIX)],
+        "calendar": [c for c in cols if c in CALENDAR_FEATURES],
+    }
+    claimed = {c for members in grouped.values() for c in members}
+    grouped["weather"] = [c for c in cols if c not in claimed]
+    return {name: members for name, members in grouped.items() if members}
 
 
 def split_xy(features: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:

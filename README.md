@@ -51,8 +51,11 @@ winter heating season, when the WHO 24-hour guideline is regularly exceeded:
 | baseline (seasonal) | 5.95 | 7.70 | −0.98 |
 | Ridge | 5.60 | 7.06 | −0.66 |
 
-Gradient boosting lowers MAE by **~25%** versus the naive persistence baseline; the
-random forest by ~15%.
+On that window gradient boosting lowers MAE by ~25% versus the naive persistence baseline.
+**Year-round the figure is 19.1%** — 6.97 against the naive rule's 8.61 µg/m³, both scored
+on the same rolling folds. The published page leads with the 19.1%: the split's 25% is a
+summer number, and quoting it beside an all-seasons error credits the model with a season
+it was not tested across.
 
 **The pipeline picks the model itself**, and it picks on rolling-origin cross-validation,
 never on the split above — choosing a winner on the rows the report then publishes would
@@ -67,12 +70,64 @@ split: **~7 µg/m³** against the split's 3.6, because winter folds are much har
 summer test window. A single split flatters the model; CV exposes the seasonal variance,
 which is why the report headlines the CV figure.
 
-Random-forest feature importances say where the skill comes from: yesterday's reading at
-the same hour dominates at **0.35**, and everything after it is a dispersion correction —
-temperature, boundary-layer height, wind. The model is persistence plus weather, and the
-weather is what buys the improvement over the naive rule:
+**What it does when the air is actually bad.** One average over every hour is dominated by
+calm ones, so the error is also reported either side of the WHO 24-hour guideline level
+(15 µg/m³, used as a reference level for hourly readings — not as a compliance test, which
+applies to daily means):
+
+| Hours | Model MAE | Model bias | Naive MAE | Naive bias |
+|-------|:---------:|:----------:|:---------:|:----------:|
+| below 15 µg/m³ (1 280 h) | 3.30 | **+2.15** | 4.37 | +1.70 |
+| at or above 15 µg/m³ (437 h) | 4.61 | **−2.73** | 6.35 | −4.95 |
+
+The model runs high on clean air and low on dirty air — regression toward the mean, which
+the aggregate bias of +0.91 hides by netting the two against each other. It flags **57%** of
+genuinely elevated hours against the naive rule's 40%, and **42%** of its warnings are wrong
+against the naive rule's 60%: better on both counts, and not an alerting system.
+
+**Where the skill comes from — measured on held-out rows, not on training splits.** The
+question worth answering is *what would the forecast lose without this?*, so each source of
+information is removed and the model scored again (MAE, µg/m³; full model 3.64, persistence
+4.87):
+
+| Source | MAE if shuffled | MAE if retrained without it |
+|--------|:---------------:|:---------------------------:|
+| Weather (9 columns) | 4.96 (+1.32) | 4.39 (+0.75) |
+| PM2.5 history (5 lag/rolling columns) | 3.84 (+0.20) | 4.36 (+0.72) |
+| Calendar (7 columns) | 3.80 (+0.16) | 3.71 (+0.08) |
+
+Weather and PM2.5 history are worth **the same** (+0.75 vs +0.72), and either one alone
+still beats the naive rule. The single strongest column is `boundary_layer_height` —
+mixing-layer depth, the physical control on how much air the pollution is diluted into.
+
+The two columns disagree on purpose. *Shuffled* keeps the fitted model and destroys the
+information at prediction time; *retrained* refits without it. PM2.5 history is cheap to
+shuffle but expensive to drop, because the five lag columns are near-duplicates — shuffle
+one and the others still carry it. That gap is why single-column importances mislead here,
+and impurity importances mislead further still:
+
+| Feature | Impurity (RF, training rows) | Permutation (MAE ↑, held-out) |
+|---------|:----------------------------:|:-----------------------------:|
+| `pm25_lag_24` | **0.353** — 1st | −0.016 |
+| `boundary_layer_height` | 0.118 | **0.358** — 1st |
+| `wind_direction_10m` | 0.082 | 0.108 |
+| `wind_speed_10m` | 0.040 | 0.080 |
+
+An earlier version of this section quoted the left column and concluded the model was
+"persistence plus a weather correction". The right column, and the group table above, say
+it is both in equal measure. Reproduce either with `pipeline importance`.
+
+The figure below is the left column — the impurity ranking, from a RandomForest that is no
+longer the deployed model. It is kept as the contrast, not as the answer:
 
 ![Feature importances](reports/figures/fig6_importances.png)
+
+**A documented null result.** That impurity ranking put wind *direction* above wind *speed*,
+which suggested the raw 0–360° encoding (discontinuous at north) was costing accuracy.
+Re-encoding it as u/v components and as sin/cos was A/B-tested on the same folds: CV MAE
+moved by ≤0.09 µg/m³ against a fold spread of ±2.5, and for the deployed model it moved the
+wrong way. The change was rejected rather than shipped — see
+[`docs/ideas/0001_report_roadmap.md`](docs/ideas/0001_report_roadmap.md).
 
 The full narrative analysis — seasonality, norm exceedances, an hour × weekday heatmap,
 and weather correlations — is in
@@ -111,6 +166,7 @@ python -m wroclaw_air_insights.pipeline all --days 365
 python -m wroclaw_air_insights.pipeline ingest --days 365
 python -m wroclaw_air_insights.pipeline train      # train + save the model
 python -m wroclaw_air_insights.pipeline compare    # baselines vs models + rolling CV
+python -m wroclaw_air_insights.pipeline importance # what each source of data is worth
 python -m wroclaw_air_insights.pipeline predict    # live next-24h PM2.5 forecast
 python -m wroclaw_air_insights.report              # build the HTML report
 
@@ -129,6 +185,11 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/01_analysis.ipynb
   and random forest on identical test data.
 - **Leakage-free inference** — training and live prediction share one feature contract:
   every feature is knowable at the forecast origin.
+- **Importance measured by removal, on held-out rows** — grouped, because near-duplicate
+  columns hide each other's contribution, and because impurity importances disagree.
+- **Backtest drawn from held-out predictions** — the published chart uses the
+  chronologically-trained model's output, never the deployed all-data model's fit over
+  days it learned from, with the naive rule plotted beside it.
 - **Explicit missing-data handling** — station gaps are treated, not ignored.
 
 ## Live report

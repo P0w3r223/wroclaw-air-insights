@@ -75,6 +75,55 @@ def _forecast_chart(forecast_df) -> str:
     return _fig_to_base64(fig)
 
 
+def _backtest_chart(backtest: dict) -> str | None:
+    """Measured against forecast over the tail of the held-out window.
+
+    Three series on purpose: without the naive rule drawn beside it, a forecast that
+    simply repeats yesterday looks impressive here, because tracking PM2.5 a day late
+    still tracks it.
+    """
+    stamps = [datetime.fromisoformat(t) for t in backtest.get("timestamps") or []]
+    actual, predicted = backtest.get("actual") or [], backtest.get("predicted") or []
+    if not stamps or len(stamps) != len(actual) or len(stamps) != len(predicted):
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 3.6))
+    ax.fill_between(stamps, actual, color="#1c2430", alpha=0.07, zorder=1)
+    ax.plot(stamps, actual, color="#1c2430", lw=1.8, zorder=3, label="Measured")
+    ax.plot(stamps, predicted, color=_ACCENT, lw=1.8, zorder=4, label="Forecast (24h ahead)")
+
+    naive = backtest.get("naive")
+    if naive and len(naive) == len(stamps):
+        ax.plot(stamps, naive, color="#98a2b3", lw=1.1, ls="--", zorder=2,
+                label=f"Naive — {baseline.LABELS['persistence']}")
+
+    ax.axhline(config.PM25_WHO_DAILY, color=_WHO_LINE, ls=":", lw=1.2, zorder=2)
+    ax.set(title="Forecast against what was measured — held-out hours",
+           ylabel="PM2.5 (µg/m³)", xlabel="")
+    ax.margins(x=0.01)
+    ax.legend(loc="upper right", ncol=3)
+    fig.autofmt_xdate()
+    return _fig_to_base64(fig)
+
+
+def _backtest_section(metadata: dict) -> str:
+    """The chart plus the sentence that makes it evidence rather than decoration."""
+    backtest = metadata.get("backtest") or {}
+    chart = _backtest_chart(backtest) if backtest.get("timestamps") else None
+    if not chart:
+        return ""
+
+    days = backtest.get("days")
+    span = f"{days} days" if isinstance(days, int) else "the final stretch"
+    hours = len(backtest["timestamps"])
+    return f"""  <h3>The last {span} of the test window, hour by hour</h3>
+  <img src="data:image/png;base64,{chart}" alt="Forecast against measured PM2.5">
+  <p class="hint">{hours:,} hours the model had never seen. These come from the
+  chronologically-trained model, not from the one serving the chart at the top of this
+  page — that one is refitted on all available data, so plotting <em>its</em> fit over
+  recent days would be showing it hours it learned from.</p>"""
+
+
 def _station_name(station_id: int) -> str:
     return next((s.name for s in config.STATIONS if s.id == station_id), f"station {station_id}")
 
@@ -93,6 +142,12 @@ def _number(value: object) -> float | None:
     return None
 
 
+def _fmt_signed(value: object, digits: int = 2) -> str:
+    """Format a signed metric, keeping the ``+`` — for bias the direction is the point."""
+    number = _number(value)
+    return f"{number:+.{digits}f}" if number is not None else "n/a"
+
+
 def _row(label: str, metrics: dict, css_class: str = "") -> str:
     """One predictor row, or nothing at all when the metrics were never recorded."""
     if not metrics:
@@ -103,6 +158,7 @@ def _row(label: str, metrics: dict, css_class: str = "") -> str:
       <td>{_fmt(metrics.get('mae'))}</td>
       <td>{_fmt(metrics.get('rmse'))}</td>
       <td>{_fmt(metrics.get('r2'))}</td>
+      <td>{_fmt_signed(metrics.get('bias'))}</td>
     </tr>
 """
 
@@ -127,13 +183,15 @@ def _metrics_table(metadata: dict) -> str:
     )
     return f"""  <table class="metrics">
     <thead>
-      <tr><th>Predictor</th><th>MAE ↓</th><th>RMSE ↓</th><th>R² ↑</th></tr>
+      <tr><th>Predictor</th><th>MAE ↓</th><th>RMSE ↓</th><th>R² ↑</th><th>Bias →0</th></tr>
     </thead>
     <tbody>
 {rows}    </tbody>
   </table>
   <p class="hint">All three scored on the same held-out window{when}.
-  MAE and RMSE are in µg/m³ (↓ lower is better); R² is a ratio (↑ higher is better).</p>"""
+  MAE, RMSE and bias are in µg/m³ (↓ lower is better); R² is a ratio (↑ higher is better).
+  Bias is the <em>signed</em> average error — positive means the forecast runs high — and
+  it is the one column where zero, not lower, is the target.</p>"""
 
 
 def _verdict(metadata: dict) -> str:
@@ -190,24 +248,126 @@ def _verdict(metadata: dict) -> str:
     return f'<p class="verdict">{headline}{caveat}</p>'
 
 
-def _skill_line(metadata: dict) -> str:
-    """State both skill scores as one family, so R² cannot be read as a stranger."""
-    skill = _number(metadata.get("skill_vs_persistence"))
-    r2 = _number((metadata.get("model") or {}).get("r2"))
-    improvement = _number(metadata.get("mae_improvement_pct"))
-    if skill is None and improvement is None:
+def _regime_row(label: str, model_regime: dict, naive_regime: dict) -> str:
+    """One regime row: the model beside the naive rule, error and direction for each."""
+    count = model_regime.get("n")
+    hours = f"{count:,} hours" if isinstance(count, int) else "—"
+    return f"""    <tr>
+      <td>{label}<br><span class="hint">{hours}</span></td>
+      <td>{_fmt(model_regime.get('mae'))}</td>
+      <td>{_fmt_signed(model_regime.get('bias'))}</td>
+      <td>{_fmt(naive_regime.get('mae'))}</td>
+      <td>{_fmt_signed(naive_regime.get('bias'))}</td>
+    </tr>
+"""
+
+
+def _detection_line(detection: dict, elevated: dict, threshold: float, naive: dict) -> str:
+    """How many of the polluted hours the forecast actually called, and at what cost."""
+    hit_rate = _number(detection.get("hit_rate"))
+    false_alarm = _number(detection.get("false_alarm_ratio"))
+    if hit_rate is None:
         return ""
+
+    naive_hit = _number((naive or {}).get("hit_rate"))
+    against = f" (the naive rule: {100 * naive_hit:.0f}%)" if naive_hit is not None else ""
+    total = elevated.get("n")
+    counted = f"{total:,} hours" if isinstance(total, int) else "the hours"
+
+    cost = ""
+    if false_alarm is not None:
+        naive_false = _number((naive or {}).get("false_alarm_ratio"))
+        naive_cost = (
+            f", against {100 * naive_false:.0f}% for the naive rule"
+            if naive_false is not None
+            else ""
+        )
+        cost = (
+            f" The warnings are not free: <strong>{100 * false_alarm:.0f}%</strong> of the "
+            f"hours it flagged turned out to be below the line{naive_cost}."
+        )
+    return (
+        f"<p class=\"skill\">Of the {counted} that actually reached "
+        f"{threshold:.0f} µg/m³, the forecast flagged "
+        f"<strong>{100 * hit_rate:.0f}%</strong>{against}.{cost}</p>"
+    )
+
+
+def _regime_section(metadata: dict) -> str:
+    """Error split at the WHO guideline level — the hours the forecast exists for.
+
+    An average over every hour is dominated by calm ones, because calm ones are most of
+    them. Splitting at the line the chart already draws shows the two failure directions
+    separately, and they turn out to point opposite ways: high when the air is clean, low
+    when it is not. That is regression toward the mean, and a single bias figure — which
+    nets the two against each other — makes it invisible.
+    """
+    regime = metadata.get("regime") or {}
+    naive = metadata.get("regime_persistence") or {}
+    clean, elevated = regime.get("clean") or {}, regime.get("elevated") or {}
+    if not clean.get("n") and not elevated.get("n"):
+        return ""
+
+    threshold = _number(regime.get("threshold")) or config.PM25_WHO_DAILY
+    rows = _regime_row(
+        f"Below {threshold:.0f} µg/m³", clean, (naive.get("clean") or {})
+    ) + _regime_row(
+        f"At or above {threshold:.0f} µg/m³", elevated, (naive.get("elevated") or {})
+    )
+    detection = _detection_line(
+        regime.get("detection") or {}, elevated, threshold, naive.get("detection") or {}
+    )
+
+    return f"""  <h3>How it behaves when the air is actually bad</h3>
+  <table class="metrics regimes">
+    <thead>
+      <tr><th>Hours</th><th>MAE ↓</th><th>Bias →0</th><th>Naive MAE</th><th>Naive bias</th></tr>
+    </thead>
+    <tbody>
+{rows}    </tbody>
+  </table>
+  <p class="hint">Split by what was <em>measured</em>, not by what was predicted.
+  {threshold:.0f} µg/m³ is the WHO 24-hour guideline level, used here as a reference for
+  hourly readings — not as a compliance test, which would apply to daily means.</p>
+  {detection}"""
+
+
+def _year_round_skill(metadata: dict) -> str:
+    """The model against the naive rule on the folds the headline error comes from."""
+    gain = _number(metadata.get("mae_improvement_pct_cv"))
+    model_mae = _number((metadata.get("cross_validation") or {}).get("mae_mean"))
+    naive_mae = _number((metadata.get("cross_validation_baseline") or {}).get("mae_mean"))
+    if None in (gain, model_mae, naive_mae):
+        return ""
+    return (
+        f"Scored on the same rolling folds as the headline above, the model's average miss "
+        f"is <strong>{gain:.1f}% smaller</strong> than the naive rule's — "
+        f"{model_mae:.2f} against {naive_mae:.2f} µg/m³."
+    )
+
+
+def _window_skill(metadata: dict, after_year_round: bool) -> str:
+    """The same comparison on the single held-out window, plus what R² adds to it."""
+    skill = _number(metadata.get("skill_vs_persistence"))
+    improvement = _number(metadata.get("mae_improvement_pct"))
+    r2 = _number((metadata.get("model") or {}).get("r2"))
 
     parts = []
     if improvement is not None:
         parts.append(
-            f"the model's average miss is <strong>{improvement:.1f}% smaller</strong> "
+            f"that gap is <strong>{improvement:.1f}%</strong>"
+            if after_year_round
+            else f"the model's average miss is <strong>{improvement:.1f}% smaller</strong> "
             f"than the naive rule's"
         )
     if skill is not None:
         parts.append(
-            f"it removes <strong>{100 * skill:.0f}%</strong> of that rule's squared error"
+            f"the model removes <strong>{100 * skill:.0f}%</strong> of that rule's squared "
+            f"error"
         )
+    if not parts:
+        return ""
+
     if r2 is None:
         against_flat = ""
     elif r2 < 0:
@@ -222,7 +382,27 @@ def _skill_line(metadata: dict) -> str:
             f"available with hindsight — it removes just {100 * r2:.0f}%, and that second "
             f"number is exactly what R² reports."
         )
-    return f'<p class="skill">On the same window, {" and ".join(parts)}.{against_flat}</p>'
+
+    opening = (
+        " On the single held-out window in the table below, "
+        if after_year_round
+        else "On the held-out window, "
+    )
+    return f"{opening}{' and '.join(parts)}.{against_flat}"
+
+
+def _skill_line(metadata: dict) -> str:
+    """Improvement over the naive rule, every figure tied to the period it was measured on.
+
+    The year-round comparison leads. Only the window one used to be printed, directly
+    beneath a year-round headline error — which credited the model with summer's easier
+    air while quoting an all-seasons miss, two periods presented as one result.
+    """
+    year_round = _year_round_skill(metadata)
+    window = _window_skill(metadata, after_year_round=bool(year_round))
+    if not year_round and not window:
+        return ""
+    return f'<p class="skill">{year_round}{window}</p>'
 
 
 def _selection_note(metadata: dict) -> str:
@@ -413,6 +593,8 @@ def generate_report(
     metrics_table = _metrics_table(metadata)
     verdict = _verdict(metadata)
     skill_line = _skill_line(metadata)
+    backtest_section = _backtest_section(metadata)
+    regime_section = _regime_section(metadata)
     glossary = _glossary(metadata)
     n_test = metadata.get("n_test")
     tested_on = f" ({n_test:,} held-out hours)" if isinstance(n_test, int) else ""
@@ -449,6 +631,10 @@ def generate_report(
   .metrics th + th, .metrics td + td {{ text-align: right;
                 font-variant-numeric: tabular-nums; width: 6.5rem; }}
   .metrics tr.deployed td {{ font-weight: 600; }}
+  .metrics.regimes th + th, .metrics.regimes td + td {{ width: 5.5rem; }}
+  .metrics.regimes td:nth-child(4), .metrics.regimes td:nth-child(5) {{ color: #667085; }}
+  .metrics.regimes td .hint {{ font-size: 0.78rem; }}
+  h3 {{ font-weight: 600; font-size: 1.02rem; margin: 28px 0 10px; }}
   .hint {{ color: #667085; font-size: 0.82rem; margin: 8px 0 0; }}
   .skill {{ margin: 14px 0 0; font-size: 0.95rem; }}
   .verdict {{ background: #f6f8fc; border-left: 3px solid {_ACCENT};
@@ -489,6 +675,8 @@ def generate_report(
   {verdict}
 {metrics_table}
   {skill_line}
+{backtest_section}
+{regime_section}
 {glossary}
 </div>
 
