@@ -41,7 +41,18 @@ def _fresh_metadata(**overrides):
         "baseline_label": baseline.LABELS["persistence"],
         "mae_improvement_pct": 40.0,
         "skill_vs_persistence": 0.673,
+        "model_name": "HistGradientBoosting",
         "cross_validation": {"n_splits": 5, "mae_mean": 6.5, "mae_std": 1.25},
+        "selection": {
+            "winner": "HistGradientBoosting",
+            "runner_up": "RandomForest",
+            "selected_on": "rolling-origin CV MAE over 5 folds",
+            "cv_by_model": {
+                "Ridge": {"mae_mean": 8.0, "mae_std": 1.9},
+                "HistGradientBoosting": {"mae_mean": 6.5, "mae_std": 1.25},
+                "RandomForest": {"mae_mean": 6.9, "mae_std": 1.3},
+            },
+        },
     }
     metadata.update(overrides)
     return metadata
@@ -145,7 +156,7 @@ def test_row_applies_the_css_class_only_when_given_one():
 # --- _metrics_table -----------------------------------------------------------
 def test_metrics_table_scores_the_model_against_both_references():
     html = report._metrics_table(_fresh_metadata())
-    assert "Random forest (this project)" in html
+    assert "HistGradientBoosting (this project)" in html
     assert baseline.LABELS["persistence"] in html
     assert baseline.LABELS["climatology"] in html
     assert html.count("<tr") == 4  # header + three predictors
@@ -172,7 +183,7 @@ def test_metrics_table_falls_back_to_the_default_baseline_label():
 
 def test_metrics_table_drops_reference_rows_a_legacy_bundle_never_stored():
     html = report._metrics_table(_LEGACY_METADATA)
-    assert "Random forest (this project)" in html
+    assert "This project's model (this project)" in html
     assert baseline.LABELS["persistence"] not in html
     assert baseline.LABELS["climatology"] not in html
     assert html.count("<tr") == 2  # header + the model row only
@@ -259,6 +270,75 @@ def test_skill_line_keeps_the_improvement_clause_alone_when_skill_is_missing():
 )
 def test_skill_line_renders_nothing_without_a_comparison(metadata):
     assert report._skill_line(metadata) == ""
+
+
+# --- _selection_note ----------------------------------------------------------
+def test_selection_note_names_the_winner_and_every_candidate():
+    html = report._selection_note(_fresh_metadata())
+    assert "<strong>HistGradientBoosting</strong>" in html
+    for candidate in ("Ridge", "RandomForest", "HistGradientBoosting"):
+        assert candidate in html
+
+
+def test_selection_note_states_that_cv_not_the_published_split_made_the_choice():
+    """The whole point of selecting on CV is lost if the page doesn't say so."""
+    html = report._selection_note(_fresh_metadata())
+    assert "cross-validation rather than on the window" in html
+    assert "best-of-three" in html
+
+
+def test_selection_note_admits_when_the_margin_is_thinner_than_the_fold_spread():
+    html = report._selection_note(_fresh_metadata())
+    assert "6.50 µg/m³ against RandomForest’s 6.90" in html
+    assert "±1.25" in html
+    assert "these two are close" in html
+
+
+def test_selection_note_warns_that_the_winner_can_change_between_runs():
+    assert "can change between runs" in report._selection_note(_fresh_metadata())
+
+
+def test_selection_note_drops_the_margin_when_there_is_no_runner_up():
+    metadata = _fresh_metadata(
+        selection={
+            "winner": "Ridge",
+            "runner_up": None,
+            "cv_by_model": {"Ridge": {"mae_mean": 8.0, "mae_std": 1.9}},
+        }
+    )
+    html = report._selection_note(metadata)
+    assert "<strong>Ridge</strong>" in html
+    assert "slim margin" not in html
+    assert "None" not in html
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        _LEGACY_METADATA,
+        {"selection": {"winner": "Ghost", "cv_by_model": {}}},
+    ],
+    ids=["empty", "legacy_bundle", "winner_absent_from_scores"],
+)
+def test_selection_note_renders_nothing_without_usable_selection_data(metadata):
+    assert report._selection_note(metadata) == ""
+
+
+def test_selection_note_survives_nan_cv_scores():
+    metadata = _fresh_metadata(
+        selection={
+            "winner": "HistGradientBoosting",
+            "runner_up": "RandomForest",
+            "cv_by_model": {
+                "HistGradientBoosting": {"mae_mean": _NAN, "mae_std": _NAN},
+                "RandomForest": {"mae_mean": _NAN, "mae_std": _NAN},
+            },
+        }
+    )
+    html = report._selection_note(metadata)
+    assert "nan" not in html
+    assert "slim margin" not in html
 
 
 # --- _glossary ----------------------------------------------------------------

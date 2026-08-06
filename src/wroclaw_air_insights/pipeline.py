@@ -79,26 +79,29 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     feature_frame = features.build_features(pm25, weather_df)
     print(f"[train] {len(feature_frame)} training rows, "
           f"{len(features.feature_columns(feature_frame))} features")
-    results, _ = model.run_experiment(feature_frame)  # honest eval on chronological split
+    # Let the comparison decide, on rolling CV rather than on the split we then report:
+    # picking a winner on the held-out rows would make its metrics a best-of-N.
+    selection = model.select_model(feature_frame, n_splits=_CV_SPLITS)
+    winner = selection["winner"]
+    print(f"[train] model selection ({selection['selected_on']}) -> {winner}")
+    print(json.dumps(selection["cv_by_model"], indent=2))
+
+    results, _ = model.run_experiment(feature_frame, model_name=winner)
     print("[train] results:")
     print(json.dumps(results, indent=2))
 
-    # A single split is one season's worth of luck. Rolling-origin CV spans every fold,
-    # so the reported error covers winter too — this is the number the report headlines.
-    cv = model.cross_validate(feature_frame, "RandomForest", n_splits=_CV_SPLITS)
-    print("[train] rolling cross-validation:")
-    print(json.dumps(cv, indent=2))
-
     # Fit the final model on ALL data (for serving) and persist it.
     x_all, y_all = features.split_xy(feature_frame)
-    final_model = model.train_forecaster(x_all, y_all)
+    final_model = model.build_models()[winner]
+    final_model.fit(x_all, y_all)
     path = model.save_model(
         final_model,
         list(x_all.columns),
         metadata={
             **results,  # split metrics, both references, window bounds, skill
             "metrics": results["model"],  # alias kept for readers of the saved bundle
-            "cross_validation": cv,
+            "cross_validation": selection["cv_by_model"][winner],
+            "selection": selection,
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
         },

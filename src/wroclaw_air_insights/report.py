@@ -110,8 +110,9 @@ def _row(label: str, metrics: dict, css_class: str = "") -> str:
 def _metrics_table(metadata: dict) -> str:
     """The model against both references it has to answer to, scored on the same rows."""
     baseline_label = metadata.get("baseline_label") or baseline.LABELS["persistence"]
+    model_name = metadata.get("model_name") or "This project's model"
     rows = (
-        _row("Random forest (this project)", metadata.get("model", {}), "deployed")
+        _row(f"{model_name} (this project)", metadata.get("model", {}), "deployed")
         + _row(f"Naive rule — “{baseline_label}”", metadata.get("baseline_persistence", {}))
         + _row(
             f"Flat line — “{baseline.LABELS['climatology']}”",
@@ -224,6 +225,39 @@ def _skill_line(metadata: dict) -> str:
     return f'<p class="skill">On the same window, {" and ".join(parts)}.{against_flat}</p>'
 
 
+def _selection_note(metadata: dict) -> str:
+    """How the deployed model was chosen — including how close the decision was.
+
+    A winner announced without its margin invites the reader to assume the margin was
+    decisive. Here it is narrower than the fold-to-fold spread, and the page says so.
+    """
+    selection = metadata.get("selection") or {}
+    winner, runner_up = selection.get("winner"), selection.get("runner_up")
+    scores = selection.get("cv_by_model") or {}
+    if not winner or winner not in scores:
+        return ""
+
+    candidates = ", ".join(scores)
+    won_by = _number(scores[winner].get("mae_mean"))
+    spread = _number(scores[winner].get("mae_std"))
+    rival = _number((scores.get(runner_up) or {}).get("mae_mean"))
+
+    margin = (
+        f" It won by a slim margin — {won_by:.2f} µg/m³ against {runner_up}’s "
+        f"{rival:.2f} — narrower than the ±{spread:.2f} swing between folds, so read it as "
+        f"“these two are close”, not as a decisive result."
+        if None not in (won_by, rival, spread) and runner_up
+        else ""
+    )
+    return f"""<p class="note"><strong>How this model was chosen.</strong> Three candidates
+  ({candidates}) were scored by rolling-origin cross-validation and <strong>{winner}</strong>
+  came out ahead. The choice deliberately runs on cross-validation rather than on the window
+  in the table above: picking a winner on the very rows that are then published would make
+  those figures a best-of-three rather than an honest estimate.{margin} The pipeline retrains
+  daily on a rolling year, so the winner can change between runs — this page always names the
+  one it actually used.</p>"""
+
+
 # RMSE/MAE ≈ 1.25 when errors are normally distributed. Meaningfully above that means a
 # minority of large misses is carrying the average.
 _GAUSSIAN_RMSE_MAE_RATIO = 1.25
@@ -292,13 +326,17 @@ def _glossary(metadata: dict) -> str:
   are shown; retraining restores the reference rows.</p>"""
     )
 
+    base_r2 = _number((metadata.get("baseline_persistence") or {}).get("r2"))
+    versus_naive = (
+        f", and the naive rule manages only {base_r2:.2f} on the same hours"
+        if base_r2 is not None
+        else ""
+    )
     r2_reading = (
-        f" This model scores {r2:.2f}, close to that floor, and part of the reason is the "
-        f"window itself: {variation} There is simply less variation available to explain, "
-        f"so every predictor's R² is squeezed toward zero. It is not <em>only</em> an "
-        f"artefact, though — a gradient-boosted model reaches 0.23 on this very same "
-        f"window. The random forest is kept because it can report which drivers it used, "
-        f"and that choice costs roughly half a µg/m³ of MAE."
+        f" This model scores {r2:.2f}, and the window is much of the reason: {variation} "
+        f"With less variation available to explain, every predictor's R² is squeezed "
+        f"toward zero{versus_naive}. Read alongside the error figures rather than on its "
+        f"own — R² is the metric here that moves most with the season."
         if r2 is not None
         else ""
     )
@@ -342,6 +380,8 @@ def _glossary(metadata: dict) -> str:
   </dl>
 
   {references_note}
+
+  {_selection_note(metadata)}
 
   <p class="note"><strong>Why a chronological split, and why two error figures.</strong> The
   test set is always strictly later in time than the training set; shuffling the hours at
