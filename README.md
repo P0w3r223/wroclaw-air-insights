@@ -52,15 +52,27 @@ winter heating season, when the WHO 24-hour guideline is regularly exceeded:
 | Ridge | 5.60 | 7.06 | −0.66 |
 
 Gradient boosting lowers MAE by **~25%** versus the naive persistence baseline; the
-random forest — kept as the interpretable default — by ~15%. Its feature importances show
-it relies on recent PM2.5 (autocorrelation) plus dispersion drivers — boundary-layer
-height, wind, temperature — so it learns the physics rather than memorizing noise:
+random forest by ~15%.
+
+**The pipeline picks the model itself**, and it picks on rolling-origin cross-validation,
+never on the split above — choosing a winner on the rows the report then publishes would
+turn those figures into a best-of-three rather than an honest estimate. CV MAE across the
+year: HistGradientBoosting **6.97**, RandomForest 7.18, Ridge 8.19. Gradient boosting wins,
+but by less than the ±2.5 swing between folds, so the honest summary is "these two are
+close" — and because the pipeline retrains daily on a rolling year, the winner can change.
+The published report always names the model it actually used.
+
+**Rolling-origin cross-validation** also gives a far more sober picture than any single
+split: **~7 µg/m³** against the split's 3.6, because winter folds are much harder than a
+summer test window. A single split flatters the model; CV exposes the seasonal variance,
+which is why the report headlines the CV figure.
+
+Random-forest feature importances say where the skill comes from: yesterday's reading at
+the same hour dominates at **0.35**, and everything after it is a dispersion correction —
+temperature, boundary-layer height, wind. The model is persistence plus weather, and the
+weather is what buys the improvement over the naive rule:
 
 ![Feature importances](reports/figures/fig6_importances.png)
-
-**Rolling-origin cross-validation** (5 folds) gives a more honest picture: RandomForest
-MAE is **7.2 ± 2.5 µg/m³** — far above the single summer split, because winter folds are
-much harder. A single split flatters the model; CV exposes the seasonal variance.
 
 The full narrative analysis — seasonality, norm exceedances, an hour × weekday heatmap,
 and weather correlations — is in
