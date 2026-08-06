@@ -4,11 +4,14 @@ The leakage tests are the important ones: they pin down that features only ever 
 into the past, which is the methodological point of the whole project.
 """
 
+from pathlib import Path
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from wroclaw_air_insights import config
+from wroclaw_air_insights import config, pipeline
 from wroclaw_air_insights.forecast import baseline, features, model
 
 _ORIGIN = pd.Timestamp("2026-01-01")
@@ -474,6 +477,27 @@ def test_candidate_names_the_registry_instead_of_echoing_the_missing_key():
     for offered in model.build_models():
         assert offered in message
     assert "pipeline train" in message
+
+
+def test_candidate_explains_a_registry_that_dropped_the_saved_model():
+    # The motivating path: `pipeline importance` measures whatever model the SAVED BUNDLE
+    # names, so dropping a candidate must fail with an explanation, not a KeyError.
+    surviving = {"Ridge": model.build_models()["Ridge"]}
+    with patch.object(model, "build_models", return_value=surviving):
+        with pytest.raises(model.UnknownModelError) as excinfo:
+            model.candidate("RandomForest")
+
+    message = str(excinfo.value)
+    assert "RandomForest" in message
+    assert "Ridge" in message
+
+
+def test_the_pipeline_reaches_the_registry_through_the_guard():
+    # Guards the fix itself: the first version of candidate() left pipeline.importance
+    # indexing build_models() directly, so the very path it was written for stayed broken.
+    source = Path(pipeline.__file__).read_text(encoding="utf-8")
+    assert "model.build_models()[" not in source
+    assert "model.candidate(" in source
 
 
 def test_candidate_returns_a_fresh_estimator_each_time():
