@@ -37,11 +37,19 @@ def time_based_split(
 
 
 def evaluate(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
-    """Return MAE, RMSE and R² rounded for reporting."""
+    """Return MAE, RMSE, R² and bias, rounded for reporting.
+
+    Bias is the *signed* average error, and it answers a question the other three cannot:
+    MAE of 3.6 µg/m³ made of random misses and MAE of 3.6 made of a steady 3.6 overshoot
+    are the same number and completely different forecasts. It matters here specifically
+    because the model trains mostly on winter and is scored on summer — a systematic
+    offset is the first thing that arrangement would produce.
+    """
     return {
         "mae": round(float(mean_absolute_error(y_true, y_pred)), 3),
         "rmse": round(float(np.sqrt(mean_squared_error(y_true, y_pred))), 3),
         "r2": round(float(r2_score(y_true, y_pred)), 3),
+        "bias": round(float(np.mean(np.asarray(y_pred) - np.asarray(y_true))), 3),
     }
 
 
@@ -67,6 +75,61 @@ def skill_score(model_rmse: float, reference_rmse: float) -> float:
     if not reference_rmse:
         return 0.0
     return round(1 - (model_rmse**2) / (reference_rmse**2), 3)
+
+
+def _regime_metrics(y_true: np.ndarray, y_pred: np.ndarray, mask: np.ndarray) -> dict:
+    """MAE and bias over the masked subset, or ``None`` when the subset is empty."""
+    if not mask.any():
+        return {"n": 0, "mae": None, "bias": None}
+    errors = y_pred[mask] - y_true[mask]
+    return {
+        "n": int(mask.sum()),
+        "mae": round(float(np.mean(np.abs(errors))), 3),
+        "bias": round(float(np.mean(errors)), 3),
+    }
+
+
+def regime_breakdown(
+    y_true: pd.Series, y_pred, threshold: float = config.PM25_WHO_DAILY
+) -> dict:
+    """Split the error by whether the hour was actually polluted, and score the warnings.
+
+    One average over every hour hides the only case a reader cares about. Clean summer air
+    is easy and abundant, so a model can post a good MAE while being useless exactly when
+    the air is bad — and "useless when it matters" is not something an aggregate reveals.
+
+    ``threshold`` is the WHO 24-hour guideline *level* used as a reference for hourly
+    values. It is not a compliance test: the guideline applies to daily means, and calling
+    an hour above it an "exceedance" would overstate what is being measured. What this
+    reports is how the forecast behaves on hours at or above that level, and how often it
+    calls them.
+    """
+    truth = np.asarray(y_true, dtype=float)
+    pred = np.asarray(y_pred, dtype=float)
+    elevated, predicted_elevated = truth >= threshold, pred >= threshold
+
+    hits = int((elevated & predicted_elevated).sum())
+    misses = int((elevated & ~predicted_elevated).sum())
+    false_alarms = int((~elevated & predicted_elevated).sum())
+
+    return {
+        "threshold": threshold,
+        "clean": _regime_metrics(truth, pred, ~elevated),
+        "elevated": _regime_metrics(truth, pred, elevated),
+        "detection": {
+            "hits": hits,
+            "misses": misses,
+            "false_alarms": false_alarms,
+            # Share of genuinely elevated hours the forecast flagged.
+            "hit_rate": round(hits / (hits + misses), 3) if hits + misses else None,
+            # Share of the forecast's warnings that were wrong.
+            "false_alarm_ratio": (
+                round(false_alarms / (hits + false_alarms), 3)
+                if hits + false_alarms
+                else None
+            ),
+        },
+    }
 
 
 def train_forecaster(
@@ -232,8 +295,10 @@ def run_experiment(
     model = build_models(random_state)[model_name]
     model.fit(x_train, y_train)
 
-    model_metrics = evaluate(y_test, model.predict(x_test))
-    base_metrics = evaluate(y_test, baseline.persistence_prediction(test_df))
+    model_predictions = model.predict(x_test)
+    base_predictions = baseline.persistence_prediction(test_df)
+    model_metrics = evaluate(y_test, model_predictions)
+    base_metrics = evaluate(y_test, base_predictions)
     # Climatology: predict the training-period mean for every hour. It is the reference
     # R² implicitly scores against, so making it an explicit row keeps R² honest —
     # "beats persistence" and "beats a flat line" are two different claims.
@@ -258,6 +323,10 @@ def run_experiment(
         "model_name": model_name,
         "mae_improvement_pct": improvement,
         "skill_vs_persistence": skill_score(model_metrics["rmse"], base_metrics["rmse"]),
+        # Both regimes for both predictors: "the model is worse on polluted hours" only
+        # means something once you know the naive rule is worse there too.
+        "regime": regime_breakdown(y_test, model_predictions),
+        "regime_persistence": regime_breakdown(y_test, base_predictions),
     }
     return results, model
 

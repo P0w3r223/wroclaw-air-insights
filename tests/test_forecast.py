@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from wroclaw_air_insights import config
 from wroclaw_air_insights.forecast import baseline, features, model
 
 _ORIGIN = pd.Timestamp("2026-01-01")
@@ -89,7 +90,7 @@ def test_compare_models_scores_baselines_and_models():
     results = model.compare_models(frame, test_fraction=0.2)
     assert {"baseline_persistence", "baseline_seasonal", "Ridge",
             "HistGradientBoosting", "RandomForest"} <= set(results)
-    assert set(results["RandomForest"]) == {"mae", "rmse", "r2"}
+    assert set(results["RandomForest"]) == {"mae", "rmse", "r2", "bias"}
 
 
 def test_cross_validate_baseline_scores_the_naive_rule_on_the_same_folds():
@@ -173,8 +174,9 @@ def test_run_experiment_reports_every_field_the_report_reads():
         "n_train", "n_test", "test_window", "test_mean_pm25", "test_std_pm25",
         "train_std_pm25", "model", "baseline_persistence", "baseline_climatology",
         "baseline_label", "mae_improvement_pct", "skill_vs_persistence",
+        "regime", "regime_persistence",
     } <= set(results)
-    assert set(results["baseline_climatology"]) == {"mae", "rmse", "r2"}
+    assert set(results["baseline_climatology"]) == {"mae", "rmse", "r2", "bias"}
     assert results["baseline_label"] == baseline.LABELS["persistence"]
     assert results["test_window"]["start"] <= results["test_window"]["end"]
 
@@ -218,6 +220,66 @@ def test_build_inference_features_returns_future_rows():
     assert len(feats) == 24
     assert (feats["timestamp"] > origin).all()
     assert not feats[features.feature_columns(feats)].isna().any().any()
+
+
+# --- Bias and the regime split at the guideline level ------------------------
+def test_evaluate_reports_bias_with_the_direction_of_the_error():
+    y_true = pd.Series([10.0, 10.0, 10.0, 10.0])
+    assert model.evaluate(y_true, pd.Series([12.0] * 4))["bias"] == pytest.approx(2.0)
+    assert model.evaluate(y_true, pd.Series([8.0] * 4))["bias"] == pytest.approx(-2.0)
+
+
+def test_evaluate_bias_cancels_where_mae_does_not():
+    # The reason bias is reported alongside MAE and not instead of it: these two
+    # forecasts are equally wrong and wrong in completely different ways.
+    y_true = pd.Series([10.0, 10.0])
+    scattered = model.evaluate(y_true, pd.Series([13.0, 7.0]))
+    skewed = model.evaluate(y_true, pd.Series([13.0, 13.0]))
+    assert scattered["mae"] == skewed["mae"] == pytest.approx(3.0)
+    assert scattered["bias"] == pytest.approx(0.0)
+    assert skewed["bias"] == pytest.approx(3.0)
+
+
+_REGIME_TRUE = pd.Series([10.0, 12.0, 20.0, 30.0, 14.0, 16.0])
+_REGIME_PRED = pd.Series([12.0, 10.0, 18.0, 20.0, 16.0, 14.0])
+
+
+def test_regime_breakdown_splits_on_what_was_measured_not_what_was_predicted():
+    result = model.regime_breakdown(_REGIME_TRUE, _REGIME_PRED, threshold=15.0)
+    assert result["clean"]["n"] == 3
+    assert result["elevated"]["n"] == 3
+    assert result["clean"]["mae"] == pytest.approx(2.0)
+    assert result["elevated"]["mae"] == pytest.approx(4.667, abs=0.001)
+
+
+def test_regime_breakdown_shows_the_two_bias_directions_separately():
+    # The finding this exists to expose: high on clean hours, low on polluted ones.
+    result = model.regime_breakdown(_REGIME_TRUE, _REGIME_PRED, threshold=15.0)
+    assert result["clean"]["bias"] > 0
+    assert result["elevated"]["bias"] < 0
+
+
+def test_regime_breakdown_counts_hits_misses_and_false_alarms():
+    detection = model.regime_breakdown(_REGIME_TRUE, _REGIME_PRED, threshold=15.0)["detection"]
+    assert (detection["hits"], detection["misses"], detection["false_alarms"]) == (2, 1, 1)
+    assert detection["hit_rate"] == pytest.approx(0.667, abs=0.001)
+    assert detection["false_alarm_ratio"] == pytest.approx(0.333, abs=0.001)
+
+
+def test_regime_breakdown_reports_none_rather_than_nan_for_an_empty_regime():
+    # A calm test window can contain no elevated hour at all; the page must be able to
+    # tell "never happened" from "scored zero".
+    calm = pd.Series([5.0, 6.0, 7.0])
+    result = model.regime_breakdown(calm, pd.Series([5.5, 6.5, 7.5]), threshold=15.0)
+    assert result["elevated"] == {"n": 0, "mae": None, "bias": None}
+    assert result["detection"]["hit_rate"] is None
+    assert result["detection"]["false_alarm_ratio"] is None
+    assert result["clean"]["n"] == 3
+
+
+def test_regime_breakdown_defaults_to_the_who_guideline_level():
+    result = model.regime_breakdown(_REGIME_TRUE, _REGIME_PRED)
+    assert result["threshold"] == config.PM25_WHO_DAILY
 
 
 # --- Importance: grouping, and measurement on held-out rows ------------------
