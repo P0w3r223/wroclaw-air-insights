@@ -1,0 +1,480 @@
+"""Tests for the report's pure string builders.
+
+These helpers write statistical prose onto a public page, so the failure mode is not
+a crash but a wrong or misleading number. Two things are pinned here:
+
+* a metric that was never recorded, or came back as NaN, degrades to ``n/a`` or to an
+  omitted row — never to a literal ``nan``/``None`` on the page;
+* the sentences that make a claim (skill vs. the naive rule, MAE as a share of the
+  window's own average, RMSE/MAE spread) render the number the metadata actually holds.
+
+The last test feeds real ``run_experiment`` output through every section, so a renamed
+metadata key fails loudly instead of silently blanking the report to ``n/a``.
+"""
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from wroclaw_air_insights import report
+from wroclaw_air_insights.forecast import baseline, features, model
+
+_NAN = float("nan")
+
+
+def _metrics(mae=3.0, rmse=4.0, r2=0.2):
+    return {"mae": mae, "rmse": rmse, "r2": r2}
+
+
+def _fresh_metadata(**overrides):
+    """Metadata in the shape `train` stores today (run_experiment + cross-validation)."""
+    metadata = {
+        "n_train": 800,
+        "n_test": 200,
+        "test_window": {"start": "2026-06-01", "end": "2026-06-30"},
+        "test_mean_pm25": 10.0,
+        "test_std_pm25": 4.0,
+        "train_std_pm25": 12.0,
+        "model": _metrics(),
+        "baseline_persistence": _metrics(mae=5.0, rmse=7.0, r2=-0.4),
+        "baseline_climatology": _metrics(mae=9.0, rmse=11.0, r2=-2.0),
+        "baseline_label": baseline.LABELS["persistence"],
+        "mae_improvement_pct": 40.0,
+        "skill_vs_persistence": 0.673,
+        "model_name": "HistGradientBoosting",
+        "cross_validation": {"n_splits": 5, "mae_mean": 6.5, "mae_std": 1.25},
+        "selection": {
+            "winner": "HistGradientBoosting",
+            "runner_up": "RandomForest",
+            "selected_on": "rolling-origin CV MAE over 5 folds",
+            "cv_by_model": {
+                "Ridge": {"mae_mean": 8.0, "mae_std": 1.9},
+                "HistGradientBoosting": {"mae_mean": 6.5, "mae_std": 1.25},
+                "RandomForest": {"mae_mean": 6.9, "mae_std": 1.3},
+            },
+        },
+    }
+    metadata.update(overrides)
+    return metadata
+
+
+# A bundle saved before the metadata was enriched: only the split metrics under the old
+# "metrics" key, normalised the way generate_report does with setdefault("model", ...).
+_LEGACY_METADATA = {
+    "metrics": _metrics(),
+    "model": _metrics(),
+    "baseline_metrics": _metrics(mae=5.0, rmse=7.0, r2=-0.4),
+    "mae_improvement_pct": 40.0,
+    "n_train": 800,
+    "n_test": 200,
+    "trained_rows": 1000,
+    "target": "PM2.5",
+}
+
+# Every metric present but unusable — the shape a bundle takes when a fold scored NaN.
+_NAN_METADATA = {
+    "model": _metrics(_NAN, _NAN, _NAN),
+    "baseline_persistence": _metrics(_NAN, _NAN, _NAN),
+    "baseline_climatology": _metrics(_NAN, _NAN, _NAN),
+    "test_window": {"start": None, "end": None},
+    "test_mean_pm25": _NAN,
+    "test_std_pm25": _NAN,
+    "train_std_pm25": _NAN,
+    "mae_improvement_pct": _NAN,
+    "skill_vs_persistence": _NAN,
+    "cross_validation": {"n_splits": 5, "mae_mean": _NAN, "mae_std": _NAN},
+}
+
+
+# --- _fmt / _number: the two gates every rendered number passes through -------
+@pytest.mark.parametrize(
+    "value,expected",
+    [(1.234, "1.23"), (0, "0.00"), (-0.5, "-0.50"), (12, "12.00"), (np.float64(2.5), "2.50")],
+    ids=["float", "zero", "negative", "int", "numpy_float"],
+)
+def test_fmt_renders_numbers_with_two_decimals(value, expected):
+    assert report._fmt(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [_NAN, None, "3.4", True, [1.0]],
+    ids=["nan", "missing", "string", "bool", "list"],
+)
+def test_fmt_degrades_to_na_instead_of_rendering_nan(value):
+    assert report._fmt(value) == "n/a"
+
+
+def test_fmt_honours_the_requested_precision():
+    assert report._fmt(0.123456, digits=1) == "0.1"
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [(1.5, 1.5), (0, 0.0), (-0.42, -0.42), (3, 3.0), (np.float64(2.5), 2.5)],
+    ids=["float", "zero", "negative_r2", "int", "numpy_float"],
+)
+def test_number_coerces_usable_metrics_to_float(value, expected):
+    assert report._number(value) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [_NAN, None, "1.5", True, {}],
+    ids=["nan", "missing", "string", "bool", "dict"],
+)
+def test_number_rejects_unusable_metrics(value):
+    assert report._number(value) is None
+
+
+# --- _row ---------------------------------------------------------------------
+def test_row_renders_label_and_all_three_metrics():
+    html = report._row("Random forest", _metrics(mae=1.0, rmse=2.0, r2=0.3))
+    assert "<td>Random forest</td>" in html
+    assert "<td>1.00</td>" in html
+    assert "<td>2.00</td>" in html
+    assert "<td>0.30</td>" in html
+
+
+@pytest.mark.parametrize("metrics", [{}, None], ids=["empty", "missing"])
+def test_row_is_omitted_entirely_when_metrics_were_never_recorded(metrics):
+    assert report._row("Naive rule", metrics) == ""
+
+
+def test_row_shows_na_for_a_metric_the_bundle_lacks():
+    html = report._row("Naive rule", {"mae": 5.0})
+    assert "<td>5.00</td>" in html
+    assert html.count("<td>n/a</td>") == 2  # rmse and r2
+    assert "nan" not in html
+
+
+def test_row_applies_the_css_class_only_when_given_one():
+    assert '<tr class="deployed">' in report._row("Model", _metrics(), "deployed")
+    assert "<tr>" in report._row("Model", _metrics())
+
+
+# --- _metrics_table -----------------------------------------------------------
+def test_metrics_table_scores_the_model_against_both_references():
+    html = report._metrics_table(_fresh_metadata())
+    assert "HistGradientBoosting (this project)" in html
+    assert baseline.LABELS["persistence"] in html
+    assert baseline.LABELS["climatology"] in html
+    assert html.count("<tr") == 4  # header + three predictors
+
+
+def test_metrics_table_names_the_window_that_was_scored():
+    html = report._metrics_table(_fresh_metadata())
+    assert "— 2026-06-01 to 2026-06-30" in html
+
+
+@pytest.mark.parametrize(
+    "window", [None, {}, {"start": "2026-06-01"}], ids=["missing", "empty", "half"]
+)
+def test_metrics_table_omits_the_window_when_it_is_incomplete(window):
+    html = report._metrics_table(_fresh_metadata(test_window=window))
+    assert "scored on the same held-out window." in html
+    assert "None" not in html
+
+
+def test_metrics_table_falls_back_to_the_default_baseline_label():
+    html = report._metrics_table(_fresh_metadata(baseline_label=None))
+    assert baseline.LABELS["persistence"] in html
+
+
+def test_metrics_table_drops_reference_rows_a_legacy_bundle_never_stored():
+    html = report._metrics_table(_LEGACY_METADATA)
+    assert "This project's model (this project)" in html
+    assert baseline.LABELS["persistence"] not in html
+    assert baseline.LABELS["climatology"] not in html
+    assert html.count("<tr") == 2  # header + the model row only
+
+
+# --- _verdict -----------------------------------------------------------------
+def test_verdict_leads_with_the_cross_validated_error_and_its_spread():
+    html = report._verdict(_fresh_metadata())
+    assert "Averaged over 5 rolling folds" in html
+    assert "<strong>6.50 ± 1.25 µg/m³</strong>" in html
+
+
+def test_verdict_frames_the_single_split_as_the_flattering_number():
+    html = report._verdict(_fresh_metadata())
+    assert "it does better — <strong>3.00 µg/m³</strong>" in html
+    assert "this sentence is the number to trust" in html
+    assert "(2026-06-01 to 2026-06-30)" in html
+
+
+def test_verdict_omits_the_spread_when_no_fold_std_was_stored():
+    metadata = _fresh_metadata(cross_validation={"n_splits": 5, "mae_mean": 6.5})
+    html = report._verdict(metadata)
+    assert "<strong>6.50 µg/m³</strong>" in html
+    assert "±" not in html
+
+
+def test_verdict_stays_vague_about_folds_when_the_count_is_not_an_int():
+    metadata = _fresh_metadata(cross_validation={"mae_mean": 6.5, "n_splits": None})
+    html = report._verdict(metadata)
+    assert "Averaged over the whole year" in html
+    assert "None" not in html
+
+
+def test_verdict_warns_that_a_split_only_figure_is_one_season():
+    metadata = _fresh_metadata()
+    del metadata["cross_validation"]
+    html = report._verdict(metadata)
+    assert "<strong>3.00 µg/m³</strong>" in html
+    assert "This is a single season and not a year-round figure." in html
+    assert "Averaged over" not in html
+
+
+@pytest.mark.parametrize(
+    "metadata", [{}, _NAN_METADATA], ids=["empty", "all_nan"]
+)
+def test_verdict_says_so_plainly_when_there_is_nothing_to_report(metadata):
+    assert report._verdict(metadata) == '<p class="verdict">No stored metrics for this model yet.</p>'
+
+
+# --- _skill_line --------------------------------------------------------------
+def test_skill_line_states_both_skill_figures_as_one_family():
+    html = report._skill_line(_fresh_metadata())
+    assert "<strong>40.0% smaller</strong>" in html
+    assert "removes <strong>67%</strong> of that rule's squared error" in html
+    assert "it removes just 20%, and that second number is exactly what R² reports" in html
+
+
+def test_skill_line_drops_the_r2_sentence_when_r2_was_not_stored():
+    metadata = _fresh_metadata(model={"mae": 3.0, "rmse": 4.0})
+    html = report._skill_line(metadata)
+    assert "R² reports" not in html
+    assert "squared error" in html
+
+
+def test_skill_line_states_a_negative_r2_in_words_not_as_a_negative_percentage():
+    """"Removes -42% of the error" is not a thing; a negative R² means no better at all."""
+    metadata = _fresh_metadata(model=_metrics(r2=-0.42))
+    html = report._skill_line(metadata)
+    assert "-0.42" in html
+    assert "no better at all" in html
+    assert "-42%" not in html
+
+
+def test_skill_line_keeps_the_improvement_clause_alone_when_skill_is_missing():
+    metadata = _fresh_metadata(skill_vs_persistence=None)
+    html = report._skill_line(metadata)
+    assert "40.0% smaller" in html
+    assert "squared error" not in html
+    assert "than the naive rule's. Against a flat line" in html  # no dangling conjunction
+
+
+@pytest.mark.parametrize(
+    "metadata", [{}, _NAN_METADATA], ids=["empty", "all_nan"]
+)
+def test_skill_line_renders_nothing_without_a_comparison(metadata):
+    assert report._skill_line(metadata) == ""
+
+
+# --- _selection_note ----------------------------------------------------------
+def test_selection_note_names_the_winner_and_every_candidate():
+    html = report._selection_note(_fresh_metadata())
+    assert "<strong>HistGradientBoosting</strong>" in html
+    for candidate in ("Ridge", "RandomForest", "HistGradientBoosting"):
+        assert candidate in html
+
+
+def test_selection_note_states_that_cv_not_the_published_split_made_the_choice():
+    """The whole point of selecting on CV is lost if the page doesn't say so."""
+    html = report._selection_note(_fresh_metadata())
+    assert "cross-validation rather than on the window" in html
+    assert "best-of-three" in html
+
+
+def test_selection_note_admits_when_the_margin_is_thinner_than_the_fold_spread():
+    html = report._selection_note(_fresh_metadata())
+    assert "6.50 µg/m³ against RandomForest’s 6.90" in html
+    assert "±1.25" in html
+    assert "these two are close" in html
+
+
+def test_selection_note_warns_that_the_winner_can_change_between_runs():
+    assert "can change between runs" in report._selection_note(_fresh_metadata())
+
+
+def test_selection_note_drops_the_margin_when_there_is_no_runner_up():
+    metadata = _fresh_metadata(
+        selection={
+            "winner": "Ridge",
+            "runner_up": None,
+            "cv_by_model": {"Ridge": {"mae_mean": 8.0, "mae_std": 1.9}},
+        }
+    )
+    html = report._selection_note(metadata)
+    assert "<strong>Ridge</strong>" in html
+    assert "slim margin" not in html
+    assert "None" not in html
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        _LEGACY_METADATA,
+        {"selection": {"winner": "Ghost", "cv_by_model": {}}},
+    ],
+    ids=["empty", "legacy_bundle", "winner_absent_from_scores"],
+)
+def test_selection_note_renders_nothing_without_usable_selection_data(metadata):
+    assert report._selection_note(metadata) == ""
+
+
+def test_selection_note_survives_nan_cv_scores():
+    metadata = _fresh_metadata(
+        selection={
+            "winner": "HistGradientBoosting",
+            "runner_up": "RandomForest",
+            "cv_by_model": {
+                "HistGradientBoosting": {"mae_mean": _NAN, "mae_std": _NAN},
+                "RandomForest": {"mae_mean": _NAN, "mae_std": _NAN},
+            },
+        }
+    )
+    html = report._selection_note(metadata)
+    assert "nan" not in html
+    assert "slim margin" not in html
+
+
+# --- _glossary ----------------------------------------------------------------
+def test_glossary_always_defines_all_three_metrics():
+    html = report._glossary({})
+    assert "MAE — mean absolute error" in html
+    assert "RMSE — root mean squared error" in html
+    assert "R² — coefficient of determination" in html
+
+
+def test_glossary_puts_the_error_in_proportion_to_the_scored_window():
+    html = report._glossary(_fresh_metadata(model=_metrics(mae=5.0), test_mean_pm25=10.0))
+    assert "PM2.5 averaged <strong>10.0 µg/m³</strong>" in html
+    assert "about 50% of a typical reading" in html
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"test_mean_pm25": None}, {"test_mean_pm25": _NAN}, {"model": {}}],
+    ids=["no_mean", "nan_mean", "no_mae"],
+)
+def test_glossary_falls_back_to_generic_scale_prose_without_both_numbers(overrides):
+    html = report._glossary(_fresh_metadata(**overrides))
+    assert "For scale, compare the error against typical PM2.5 levels" in html
+    assert "typical reading from that same period" not in html
+
+
+def test_glossary_reads_an_even_error_spread_as_no_disastrous_hours():
+    html = report._glossary(_fresh_metadata(model=_metrics(mae=4.0, rmse=5.2)))
+    assert "Here RMSE is 1.30× the MAE" in html
+    assert "no small group of disastrous hours" in html
+
+
+def test_glossary_flags_a_wide_spread_as_a_few_large_misses():
+    html = report._glossary(_fresh_metadata(model=_metrics(mae=4.0, rmse=7.2)))
+    assert "Here RMSE is 1.80× the MAE" in html
+    assert "a minority of large misses dominates" in html
+
+
+def test_glossary_survives_a_zero_mae_without_dividing_by_it():
+    html = report._glossary(_fresh_metadata(model=_metrics(mae=0.0, rmse=0.0)))
+    assert "Comparing RMSE against MAE tells you" in html
+    assert "inf" not in html
+
+
+def test_glossary_quotes_the_windows_variation_against_the_training_period():
+    html = report._glossary(_fresh_metadata())
+    assert "PM2.5 varied by only 4.0 µg/m³ (standard deviation)" in html
+    assert "against 12.0 over the training period" in html
+
+
+def test_glossary_explains_three_rows_when_the_references_were_recorded():
+    html = report._glossary(_fresh_metadata())
+    assert "Why there are three rows, not one." in html
+    assert "predates the comparison being recorded" not in html
+
+
+def test_glossary_explains_the_missing_rows_for_a_legacy_bundle():
+    html = report._glossary(_LEGACY_METADATA)
+    assert "predates the comparison being recorded" in html
+    assert "Why there are three rows, not one." not in html
+
+
+def test_glossary_drops_the_r2_reading_when_r2_was_not_stored():
+    html = report._glossary(_fresh_metadata(model={"mae": 3.0, "rmse": 4.0}))
+    assert "close to that floor" not in html
+    assert "R² — coefficient of determination" in html
+
+
+# --- Cross-cutting: nothing unusable ever reaches the page --------------------
+@pytest.mark.parametrize(
+    "builder",
+    [report._metrics_table, report._verdict, report._skill_line, report._glossary],
+    ids=["metrics_table", "verdict", "skill_line", "glossary"],
+)
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, _NAN_METADATA, _LEGACY_METADATA],
+    ids=["empty", "all_nan", "legacy_bundle"],
+)
+def test_sections_never_leak_nan_or_none_onto_the_page(builder, metadata):
+    html = builder(metadata)
+    assert "nan" not in html
+    assert "None" not in html
+    assert "inf" not in html
+
+
+# --- Contract with forecast.model --------------------------------------------
+@pytest.fixture(scope="module")
+def trained_metadata():
+    """Real `run_experiment` output plus CV, exactly as `pipeline.train` stores it."""
+    hours = 400
+    ts = pd.date_range("2026-01-01", periods=hours, freq="h")
+    rng = np.random.default_rng(0)
+    pm25 = pd.DataFrame(
+        {
+            "timestamp": ts,
+            "value": 20 + 8 * np.sin(np.arange(hours) / 12) + rng.normal(0, 2, hours),
+        }
+    )
+    weather = pd.DataFrame(
+        {
+            "timestamp": ts,
+            "temperature_2m": np.linspace(0, 10, hours),
+            "wind_speed_10m": np.linspace(1, 5, hours),
+        }
+    )
+    frame = features.build_features(pm25, weather)
+    results, _ = model.run_experiment(frame, test_fraction=0.2)
+    return {
+        **results,
+        "metrics": results["model"],
+        "cross_validation": model.cross_validate(frame, "RandomForest", n_splits=3),
+    }
+
+
+def test_every_section_renders_real_metadata_without_falling_back(trained_metadata):
+    # If run_experiment renames a key, the report degrades silently to n/a / blank
+    # prose rather than raising — so the contract is asserted from the reader's side.
+    table = report._metrics_table(trained_metadata)
+    assert "n/a" not in table
+    assert table.count("<tr") == 4
+    assert trained_metadata["test_window"]["start"] in table
+
+    verdict = report._verdict(trained_metadata)
+    assert "Averaged over 3 rolling folds" in verdict
+    assert "this sentence is the number to trust" in verdict
+
+    skill = report._skill_line(trained_metadata)
+    assert "squared error" in skill
+    assert "R² reports" in skill
+
+    glossary = report._glossary(trained_metadata)
+    assert "Why there are three rows, not one." in glossary
+    assert "typical reading from that same period" in glossary
+
+    for section in (table, verdict, skill, glossary):
+        assert "nan" not in section
+        assert "None" not in section

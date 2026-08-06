@@ -44,6 +44,19 @@ def evaluate(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
     }
 
 
+def skill_score(model_rmse: float, reference_rmse: float) -> float:
+    """Fraction of a reference predictor's squared error that the model removes.
+
+    ``1 - MSE_model / MSE_reference``: 1 is perfect, 0 is no better than the reference,
+    negative is worse. R² is this same score with climatology (the mean of the scored
+    window) as the reference — naming both as skill keeps them comparable instead of
+    letting one masquerade as a different kind of number.
+    """
+    if not reference_rmse:
+        return 0.0
+    return round(1 - (model_rmse**2) / (reference_rmse**2), 3)
+
+
 def train_forecaster(
     x_train: pd.DataFrame, y_train: pd.Series, random_state: int = 42
 ) -> RandomForestRegressor:
@@ -68,17 +81,26 @@ def feature_importances(
 
 
 def run_experiment(
-    features_df: pd.DataFrame, test_fraction: float = 0.2, random_state: int = 42
-) -> tuple[dict, RandomForestRegressor]:
+    features_df: pd.DataFrame,
+    test_fraction: float = 0.2,
+    random_state: int = 42,
+    model_name: str = "RandomForest",
+) -> tuple[dict, object]:
     """Train, evaluate against the persistence baseline, and report the improvement."""
     train_df, test_df = time_based_split(features_df, test_fraction)
     x_train, y_train = features.split_xy(train_df)
     x_test, y_test = features.split_xy(test_df)
 
-    model = train_forecaster(x_train, y_train, random_state)
+    model = build_models(random_state)[model_name]
+    model.fit(x_train, y_train)
 
     model_metrics = evaluate(y_test, model.predict(x_test))
     base_metrics = evaluate(y_test, baseline.persistence_prediction(test_df))
+    # Climatology: predict the training-period mean for every hour. It is the reference
+    # R² implicitly scores against, so making it an explicit row keeps R² honest —
+    # "beats persistence" and "beats a flat line" are two different claims.
+    climatology = pd.Series(y_train.mean(), index=y_test.index)
+    clim_metrics = evaluate(y_test, climatology)
 
     base_mae = base_metrics["mae"]
     improvement = round(100 * (base_mae - model_metrics["mae"]) / base_mae, 1) if base_mae else 0.0
@@ -86,11 +108,32 @@ def run_experiment(
     results = {
         "n_train": len(train_df),
         "n_test": len(test_df),
+        # The test window's own statistics: MAE means nothing without the level and the
+        # spread of the period it was measured on, and both swing hard with the season.
+        "test_window": _window_bounds(test_df),
+        "test_mean_pm25": round(float(y_test.mean()), 3),
+        "test_std_pm25": round(float(y_test.std()), 3),
+        "train_std_pm25": round(float(y_train.std()), 3),
         "model": model_metrics,
         "baseline_persistence": base_metrics,
+        "baseline_climatology": clim_metrics,
+        "baseline_label": baseline.LABELS["persistence"],
+        "model_name": model_name,
         "mae_improvement_pct": improvement,
+        "skill_vs_persistence": skill_score(model_metrics["rmse"], base_metrics["rmse"]),
     }
     return results, model
+
+
+def _window_bounds(df: pd.DataFrame) -> dict[str, str] | None:
+    """First and last date covered by ``df``, for labelling which period was scored."""
+    if "timestamp" not in df or df.empty:
+        return None
+    stamps = pd.to_datetime(df["timestamp"])
+    return {
+        "start": stamps.min().date().isoformat(),
+        "end": stamps.max().date().isoformat(),
+    }
 
 
 # --- Model comparison & rolling cross-validation -----------------------------
@@ -130,6 +173,29 @@ def compare_models(
         model.fit(x_train, y_train)
         results[name] = evaluate(y_test, model.predict(x_test))
     return results
+
+
+def select_model(
+    features_df: pd.DataFrame, n_splits: int = 5, random_state: int = 42
+) -> dict:
+    """Pick the candidate with the lowest rolling-CV MAE, and show its rivals' scores.
+
+    Selection runs on cross-validation, never on the held-out split. Choosing the winner
+    on the same rows the report then presents as held-out performance would turn those
+    metrics into a best-of-N — the same kind of leak a random split would cause, just
+    one level up. CV also spans every season, so the choice is not made by one window.
+    """
+    scores = {
+        name: cross_validate(features_df, name, n_splits, random_state)
+        for name in build_models(random_state)
+    }
+    ranked = sorted(scores, key=lambda name: scores[name]["mae_mean"])
+    return {
+        "winner": ranked[0],
+        "runner_up": ranked[1] if len(ranked) > 1 else None,
+        "cv_by_model": scores,
+        "selected_on": f"rolling-origin CV MAE over {n_splits} folds",
+    }
 
 
 def cross_validate(
