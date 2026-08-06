@@ -81,14 +81,18 @@ def feature_importances(
 
 
 def run_experiment(
-    features_df: pd.DataFrame, test_fraction: float = 0.2, random_state: int = 42
-) -> tuple[dict, RandomForestRegressor]:
+    features_df: pd.DataFrame,
+    test_fraction: float = 0.2,
+    random_state: int = 42,
+    model_name: str = "RandomForest",
+) -> tuple[dict, object]:
     """Train, evaluate against the persistence baseline, and report the improvement."""
     train_df, test_df = time_based_split(features_df, test_fraction)
     x_train, y_train = features.split_xy(train_df)
     x_test, y_test = features.split_xy(test_df)
 
-    model = train_forecaster(x_train, y_train, random_state)
+    model = build_models(random_state)[model_name]
+    model.fit(x_train, y_train)
 
     model_metrics = evaluate(y_test, model.predict(x_test))
     base_metrics = evaluate(y_test, baseline.persistence_prediction(test_df))
@@ -114,6 +118,7 @@ def run_experiment(
         "baseline_persistence": base_metrics,
         "baseline_climatology": clim_metrics,
         "baseline_label": baseline.LABELS["persistence"],
+        "model_name": model_name,
         "mae_improvement_pct": improvement,
         "skill_vs_persistence": skill_score(model_metrics["rmse"], base_metrics["rmse"]),
     }
@@ -168,6 +173,29 @@ def compare_models(
         model.fit(x_train, y_train)
         results[name] = evaluate(y_test, model.predict(x_test))
     return results
+
+
+def select_model(
+    features_df: pd.DataFrame, n_splits: int = 5, random_state: int = 42
+) -> dict:
+    """Pick the candidate with the lowest rolling-CV MAE, and show its rivals' scores.
+
+    Selection runs on cross-validation, never on the held-out split. Choosing the winner
+    on the same rows the report then presents as held-out performance would turn those
+    metrics into a best-of-N — the same kind of leak a random split would cause, just
+    one level up. CV also spans every season, so the choice is not made by one window.
+    """
+    scores = {
+        name: cross_validate(features_df, name, n_splits, random_state)
+        for name in build_models(random_state)
+    }
+    ranked = sorted(scores, key=lambda name: scores[name]["mae_mean"])
+    return {
+        "winner": ranked[0],
+        "runner_up": ranked[1] if len(ranked) > 1 else None,
+        "cv_by_model": scores,
+        "selected_on": f"rolling-origin CV MAE over {n_splits} folds",
+    }
 
 
 def cross_validate(
