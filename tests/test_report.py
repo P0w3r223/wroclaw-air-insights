@@ -176,6 +176,18 @@ def test_metrics_table_omits_the_window_when_it_is_incomplete(window):
     assert "None" not in html
 
 
+def test_metrics_table_caption_counts_the_rows_it_actually_rendered():
+    # The caption used to say "All three" unconditionally, including for a legacy bundle
+    # that renders the model row alone — a claim about rows that are not on the page.
+    full = report._metrics_table(_fresh_metadata())
+    assert "All 3 are scored on the same held-out window" in full
+
+    alone = report._metrics_table(_LEGACY_METADATA)
+    assert alone.count("<tr") == 2  # header + the model row
+    assert "All 3" not in alone
+    assert "Scored on the held-out window" in alone
+
+
 def test_metrics_table_falls_back_to_the_default_baseline_label():
     html = report._metrics_table(_fresh_metadata(baseline_label=None))
     assert baseline.LABELS["persistence"] in html
@@ -372,6 +384,16 @@ def test_regime_section_says_the_threshold_is_a_reference_not_a_compliance_test(
     # roadmap item was written to avoid repeating.
     html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
     assert "not as a compliance test" in html
+
+
+def test_regime_section_honours_a_stored_threshold_of_zero():
+    # `_number(...) or DEFAULT` swallows 0.0, which would relabel every row with the WHO
+    # level while the numbers underneath were split somewhere else entirely.
+    zeroed = _regime()
+    zeroed["threshold"] = 0.0
+    html = report._regime_section(_fresh_metadata(regime=zeroed))
+    assert "Below 0 µg/m³" in html
+    assert "15 µg/m³" not in html
 
 
 def test_regime_section_drops_the_detection_line_when_no_hour_was_elevated():

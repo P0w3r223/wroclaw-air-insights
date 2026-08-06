@@ -112,7 +112,7 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
 
     # Fit the final model on ALL data (for serving) and persist it.
     x_all, y_all = features.split_xy(feature_frame)
-    final_model = model.build_models()[winner]
+    final_model = model.candidate(winner)
     final_model.fit(x_all, y_all)
     path = model.save_model(
         final_model,
@@ -201,7 +201,7 @@ def importance(
     train_df, test_df = model.time_based_split(feature_frame)
     x_train, y_train = features.split_xy(train_df)
     x_test, y_test = features.split_xy(test_df)
-    estimator = model.build_models()[name]
+    estimator = model.candidate(name)
     estimator.fit(x_train, y_train)
     per_column = model.permutation_importances(estimator, x_test, y_test)
     print("[importance] top single columns (MAE increase when shuffled):")
