@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from wroclaw_air_insights import charts, config, horizon_section
+from wroclaw_air_insights import charts, config, horizon_section, rejected_section
 from wroclaw_air_insights.forecast import baseline, model, serving
 from wroclaw_air_insights.formatting import fmt as _fmt
 from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
@@ -23,6 +23,7 @@ from wroclaw_air_insights.ingest import gios
 # The lead-axis section lives in its own module; the page still reaches it by the name every
 # other section builder uses here.
 _horizon_section = horizon_section.render
+_rejected_section = rejected_section.render
 
 _ACCENT = charts.ACCENT  # the page CSS and the figures share one accent colour
 
@@ -570,6 +571,7 @@ def _render_page(
     verdict = _verdict(metadata)
     skill_line = _skill_line(metadata)
     horizon_section = _horizon_section(metadata)
+    rejected = _rejected_section(metadata)
     backtest_section = _backtest_section(metadata)
     regime_section = _regime_section(metadata)
     glossary = _glossary(metadata)
@@ -628,6 +630,12 @@ def _render_page(
              border-left: 2px solid #eef1f6; }}
   details.glossary dd p {{ margin: 6px 0; }}
   .unit {{ color: #667085; font-weight: 400; font-size: 0.85em; }}
+
+  /* --- Measured and rejected: same shape as the glossary, but not folded away --- */
+  dl.rejected {{ margin: 14px 0 0; }}
+  dl.rejected dt {{ font-weight: 600; margin-top: 18px; }}
+  dl.rejected dd {{ margin: 6px 0 0; padding-left: 14px; border-left: 2px solid #eef1f6; }}
+  dl.rejected dd p {{ margin: 6px 0; font-size: 0.93rem; }}
   .note {{ background: #fbfbf9; border: 1px solid #eef1f6; border-radius: 8px;
           padding: 12px 14px; margin-top: 16px; font-size: 0.93rem; }}
 </style>
@@ -655,6 +663,7 @@ def _render_page(
 {horizon_section}
 {backtest_section}
 {regime_section}
+{rejected}
 {glossary}
 </div>
 
