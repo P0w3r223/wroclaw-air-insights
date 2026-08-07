@@ -7,13 +7,14 @@ can be published to Pages with no external assets.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 
-from wroclaw_air_insights import charts, config, horizon_section
+from wroclaw_air_insights import charts, config, horizon_section, rejected_section
 from wroclaw_air_insights.forecast import baseline, model, serving
 from wroclaw_air_insights.formatting import fmt as _fmt
 from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
@@ -23,6 +24,7 @@ from wroclaw_air_insights.ingest import gios
 # The lead-axis section lives in its own module; the page still reaches it by the name every
 # other section builder uses here.
 _horizon_section = horizon_section.render
+_rejected_section = rejected_section.render
 
 _ACCENT = charts.ACCENT  # the page CSS and the figures share one accent colour
 
@@ -39,6 +41,86 @@ _AQI_COLORS = {
     "Brak indeksu": _NEUTRAL_BADGE,
 }
 _DEFAULT_REPORT_PATH = config.PROJECT_ROOT / "reports" / "site" / "index.html"
+
+
+def _forecast_origin(forecast_df: pd.DataFrame, generated_at: datetime):
+    """The hour the forecast was anchored on, as an aware datetime — or ``None``.
+
+    Derived rather than plumbed through: every row carries the hour it predicts and how many
+    hours ahead of the origin that is, so the origin is recoverable from the frame the page
+    already holds. A frame without a ``lead`` column predates the per-lead policy and yields
+    nothing, which is why this returns ``None`` instead of guessing at row order.
+
+    Stored timestamps are tz-naive and ``generated_at`` is aware, so subtracting them raises.
+    Naive stamps are read as ``config.TIMEZONE`` — the project runs on one clock, and this is
+    the seam where that assumption becomes load bearing rather than merely true.
+
+    Both DST arguments are mandatory rather than decorative. ``tz_localize`` defaults to
+    raising on the ambiguous hour and on the one that does not exist, and ``clean.to_hourly_grid``
+    keeps its timestamps naive precisely to sidestep that. A station whose final reading lands
+    inside the fall-back hour would otherwise pin ``max()`` on an ambiguous stamp and take the
+    whole page down on every subsequent build — the outage handler failing on the outage. An
+    hour of error one night a year is the right trade against no page at all.
+    """
+    if forecast_df.empty or "lead" not in forecast_df.columns:
+        return None
+    stamps = pd.to_datetime(forecast_df["timestamp"], errors="coerce")
+    leads = pd.to_numeric(forecast_df["lead"], errors="coerce")
+    # isfinite, not notna: an infinite lead passes notna and then overflows int().
+    usable = stamps.notna() & np.isfinite(leads)
+    if not usable.any():
+        return None
+
+    first = usable.idxmax()
+    # stdlib timedelta, not pd.Timedelta(hours=...): under pandas 2.3 / numpy 2.5 the keyword
+    # form is deprecated and slated to raise.
+    origin = stamps[first] - timedelta(hours=int(leads[first]))
+    if origin.tzinfo is None:
+        origin = origin.tz_localize(
+            generated_at.tzinfo, ambiguous=True, nonexistent="shift_forward"
+        )
+    return origin.tz_convert(generated_at.tzinfo)
+
+
+def _freshness_note(forecast_df: pd.DataFrame, generated_at: datetime) -> str:
+    """How old the reading this forecast is anchored on actually is.
+
+    The early leads are the current reading republished, so the page calls it exactly that.
+    When a station stops reporting, nothing else on the page changes — the model still fits,
+    the chart still draws, and the wording still says "current". This is the one line that
+    would not.
+
+    Deliberately not a build failure. A daily job that refuses to publish on a station outage
+    replaces a stale-but-labelled page with no page at all, which is worse for a reader and
+    hides the outage rather than reporting it.
+    """
+    origin = _forecast_origin(forecast_df, generated_at)
+    if origin is None:
+        return ""
+    age = (generated_at - origin).total_seconds() / 3600
+    if age < 0:
+        return ""
+
+    when = origin.strftime("%Y-%m-%d %H:%M %Z")
+    # Branch on the figure that gets printed, not on the one behind it. Testing the unrounded
+    # age let 2.99 h and 3.00 h both render "3 h" while reaching opposite verdicts, so two
+    # pages could show the same number and disagree about whether anything was wrong.
+    shown = round(age)
+    if shown < config.STALE_ORIGIN_HOURS:
+        return f"""<p class="hint">Anchored on the {when} reading, {shown} h before this page
+  was built.</p>"""
+
+    # What the page can see is that readings stopped arriving; whether the *station* stopped
+    # is a diagnosis, and at one hour past normal GIOŚ lag the data does not support it. It
+    # is only asserted once the gap is long enough to have no innocent reading.
+    diagnosis = (
+        " The station reports hourly, so a gap this long means it has stopped reporting."
+        if shown >= config.STATION_OUTAGE_HOURS
+        else ""
+    )
+    return f"""<p class="hint"><strong>The most recent reading available was {when}</strong> —
+  {shown} hours before this page was built, so the earliest hours below repeat a measurement
+  that is no longer current.{diagnosis}</p>"""
 
 
 def _backtest_section(metadata: dict) -> str:
@@ -565,11 +647,13 @@ def _render_page(
     peak = _number(forecast_df["predicted_pm25"].max())
     peak_value = f"<strong>{peak:.1f} µg/m³</strong>" if peak is not None else "n/a"
     generated = generated_at.strftime("%Y-%m-%d %H:%M %Z")
+    freshness = _freshness_note(forecast_df, generated_at)
 
     metrics_table = _metrics_table(metadata)
     verdict = _verdict(metadata)
     skill_line = _skill_line(metadata)
     horizon_section = _horizon_section(metadata)
+    rejected = _rejected_section(metadata)
     backtest_section = _backtest_section(metadata)
     regime_section = _regime_section(metadata)
     glossary = _glossary(metadata)
@@ -628,6 +712,12 @@ def _render_page(
              border-left: 2px solid #eef1f6; }}
   details.glossary dd p {{ margin: 6px 0; }}
   .unit {{ color: #667085; font-weight: 400; font-size: 0.85em; }}
+
+  /* --- Measured and rejected: same shape as the glossary, but not folded away --- */
+  dl.rejected {{ margin: 14px 0 0; }}
+  dl.rejected dt {{ font-weight: 600; margin-top: 18px; }}
+  dl.rejected dd {{ margin: 6px 0 0; padding-left: 14px; border-left: 2px solid #eef1f6; }}
+  dl.rejected dd p {{ margin: 6px 0; font-size: 0.93rem; }}
   .note {{ background: #fbfbf9; border: 1px solid #eef1f6; border-radius: 8px;
           padding: 12px 14px; margin-top: 16px; font-size: 0.93rem; }}
 </style>
@@ -641,6 +731,7 @@ def _render_page(
   <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
   <p>Highest hour ahead: {peak_value}
      (WHO 24-hour guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
+  {freshness}
 </div>
 
 <div class="card">
@@ -655,6 +746,7 @@ def _render_page(
 {horizon_section}
 {backtest_section}
 {regime_section}
+{rejected}
 {glossary}
 </div>
 

@@ -16,6 +16,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pandas as pd
 
 from wroclaw_air_insights import clean, config, db
 from wroclaw_air_insights.forecast import features, horizon, model, serving
@@ -90,14 +94,59 @@ def _lead_summary(policy: dict) -> dict:
     }
 
 
-def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
+def observation_freshness(pm25: pd.DataFrame, now: datetime) -> dict:
+    """How recent the data being trained on actually is.
+
+    A station outage is silent everywhere else in this pipeline: ``ingest`` only raises when
+    there is no PM2.5 *at all*, so a gap of days still trains, still scores, and still
+    publishes — on a window quietly ending before the reader's day. Recording the end of the
+    window makes that visible in the bundle and in the CI log.
+
+    Pure, and takes its clock as an argument, so "stale" is testable without waiting.
+    """
+    if pm25.empty or pm25["timestamp"].isna().all():
+        return {"latest_observation": None, "age_hours": None, "stale": True}
+
+    latest = pd.to_datetime(pm25["timestamp"]).max()
+    # Stored stamps are tz-naive local time; the clock handed in is aware. One clock, so the
+    # naive one is read as config.TIMEZONE rather than as UTC.
+    #
+    # The DST arguments are load bearing, not tidiness. tz_localize raises by default on the
+    # ambiguous fall-back hour and the non-existent spring-forward one, and this runs near the
+    # top of train() — so a station whose last reading sits in either would kill the daily job
+    # outright, which is the opposite of what recording the outage is for.
+    aware = (
+        latest.tz_localize(now.tzinfo, ambiguous=True, nonexistent="shift_forward")
+        if latest.tzinfo is None
+        else latest
+    )
+    age = (now - aware).total_seconds() / 3600
+    return {
+        "latest_observation": aware.isoformat(),
+        "age_hours": round(age, 1),
+        "stale": age >= config.STALE_ORIGIN_HOURS,
+    }
+
+
+def train(station_id: int = config.PRIMARY_STATION_ID, now: datetime | None = None) -> dict:
     """Read stored data, build features, train, and evaluate vs baseline."""
+    now = now or datetime.now(ZoneInfo(config.TIMEZONE))
     conn = db.connect()
     try:
         pm25 = db.read_pm25(conn, station_id)
         weather_df = db.read_weather(conn)
     finally:
         conn.close()
+
+    freshness = observation_freshness(pm25, now)
+    if freshness["stale"]:
+        # Loud, and not fatal. Refusing to publish on an outage swaps a stale-but-labelled
+        # page for no page, which hides the outage instead of reporting it.
+        print(f"[train] WARNING: newest PM2.5 reading is {freshness['latest_observation']}, "
+              f"{freshness['age_hours']} h old — the published page will say so")
+    else:
+        print(f"[train] newest PM2.5 reading {freshness['latest_observation']} "
+              f"({freshness['age_hours']} h old)")
 
     feature_frame = features.build_features(pm25, weather_df)
     print(f"[train] {len(feature_frame)} training rows, "
@@ -158,6 +207,7 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
             "horizon": policy,
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
+            "data_freshness": freshness,
         },
         policy=policy,
     )

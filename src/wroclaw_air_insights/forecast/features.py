@@ -20,6 +20,7 @@ project's methodology — see CLAUDE.md.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -114,7 +115,7 @@ def build_inference_features(
     span from before the deepest lag up to ``origin + horizon`` (use past+forecast).
     """
     future_index = pd.date_range(
-        origin + pd.Timedelta(hours=1), periods=horizon, freq="h"
+        origin + timedelta(hours=1), periods=horizon, freq="h"
     )
     pm25_ext = pd.concat(
         [

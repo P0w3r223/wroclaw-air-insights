@@ -7,6 +7,7 @@ against a persistence baseline and quantifies the improvement.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import joblib
@@ -177,7 +178,7 @@ def backtest_series(
         return None
 
     stamps = pd.to_datetime(test_df["timestamp"])
-    recent = stamps >= stamps.max() - pd.Timedelta(days=days)
+    recent = stamps >= stamps.max() - timedelta(days=days)
     if not recent.any():
         return None
 
