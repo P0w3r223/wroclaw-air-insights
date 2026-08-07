@@ -14,8 +14,11 @@ from math import isfinite
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import matplotlib
 import pandas as pd
+
+# Select the headless backend before anything can import pyplot — keep the two lines
+# adjacent so nothing slips in between them.
+import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -41,7 +44,9 @@ _CHART_STYLE = {
 }
 plt.rcParams.update(_CHART_STYLE)
 
-# Polish air-quality index categories -> display colour.
+# Polish air-quality index categories -> display colour. GIOŚ owns this vocabulary, so a
+# category outside the table falls back to the neutral badge rather than taking the page down.
+_NEUTRAL_BADGE = "#9e9e9e"
 _AQI_COLORS = {
     "Bardzo dobry": "#1a9850",
     "Dobry": "#91cf60",
@@ -49,7 +54,7 @@ _AQI_COLORS = {
     "Dostateczny": "#fc8d59",
     "Zły": "#d73027",
     "Bardzo zły": "#7f0000",
-    "Brak indeksu": "#9e9e9e",
+    "Brak indeksu": _NEUTRAL_BADGE,
 }
 _DEFAULT_REPORT_PATH = config.PROJECT_ROOT / "reports" / "site" / "index.html"
 
@@ -600,6 +605,9 @@ def _render_page(
     owns all three. That is what makes the assembled page testable, including the
     legacy-metadata normalisation below, which previously could only be reached
     through a live GIOŚ call plus a saved bundle.
+
+    ``generated_at`` must be timezone-aware: the footer renders ``%Z``, so a naive
+    datetime silently publishes a timestamp with no zone on it.
     """
     # Older bundles stored the split metrics only under "metrics"; normalise so the
     # section builders can read one key. Copied rather than mutated in place: the
@@ -608,9 +616,12 @@ def _render_page(
 
     overall = aqi.get("overall", {})
     category = overall.get("category") or "Brak indeksu"
-    colour = _AQI_COLORS.get(category, "#9e9e9e")
+    colour = _AQI_COLORS.get(category, _NEUTRAL_BADGE)
     chart_b64 = _forecast_chart(forecast_df)
-    peak = forecast_df["predicted_pm25"].max()
+    # The peak is the largest number on the page, and it comes from the frame rather than
+    # from the metadata — so it needs the same gate every stored metric already passes.
+    peak = _number(forecast_df["predicted_pm25"].max())
+    peak_value = f"<strong>{peak:.1f} µg/m³</strong>" if peak is not None else "n/a"
     generated = generated_at.strftime("%Y-%m-%d %H:%M %Z")
 
     metrics_table = _metrics_table(metadata)
@@ -685,7 +696,7 @@ def _render_page(
 <div class="card">
   <p>Current air-quality index: <span class="badge">{category}</span></p>
   <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
-  <p>Forecast peak: <strong>{peak:.1f} µg/m³</strong>
+  <p>Forecast peak: {peak_value}
      (WHO 24-hour guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
 </div>
 

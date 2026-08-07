@@ -752,8 +752,15 @@ def test_render_page_normalises_a_bundle_that_stored_metrics_under_the_old_key()
     assert "3.00" in html
 
 
-def test_render_page_leaves_the_metadata_it_was_given_untouched():
-    metadata = _fresh_metadata()
+@pytest.mark.parametrize(
+    "metadata",
+    [{"metrics": _metrics(), "n_test": 200}, {}, _fresh_metadata()],
+    ids=["legacy_bundle", "empty", "fresh"],
+)
+def test_render_page_leaves_the_metadata_it_was_given_untouched(metadata):
+    # The shapes that matter are the ones WITHOUT a "model" key: on those, and only those,
+    # the old setdefault rewrote the caller's dict. A fresh bundle already carries the key,
+    # so it would keep this test green against the very code it is meant to guard against.
     before = copy.deepcopy(metadata)
     _page(metadata)
     assert metadata == before
@@ -807,3 +814,15 @@ def test_render_page_never_leaks_nan_or_none_onto_the_public_page(metadata):
     assert "nan" not in prose
     assert "None" not in prose
     assert "inf" not in prose
+
+
+@pytest.mark.parametrize(
+    "forecast_df",
+    [_forecast_frame(hours=0), _forecast_frame().assign(predicted_pm25=_NAN)],
+    ids=["no_rows", "all_nan"],
+)
+def test_render_page_never_publishes_a_peak_it_cannot_compute(forecast_df):
+    # The peak is the largest number on the page and it comes from the frame, not from the
+    # metadata — so the metadata parametrize above cannot reach it. `predict_next_24h` raises
+    # rather than returning an empty frame today, but item 5 adds callers to this seam.
+    assert "nan" not in _prose_only(_page(_fresh_metadata(), forecast_df=forecast_df))
