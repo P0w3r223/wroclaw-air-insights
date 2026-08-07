@@ -23,7 +23,7 @@ import pandas as pd
 
 from wroclaw_air_insights import clean, config, db
 from wroclaw_air_insights.forecast import ab as ab_harness
-from wroclaw_air_insights.forecast import features, horizon, model, serving
+from wroclaw_air_insights.forecast import features, horizon, model, serving, specialists
 from wroclaw_air_insights.ingest import gios, weather
 
 _MAX_ARCHIVAL_DAYS = 366
@@ -374,6 +374,52 @@ def ab(
     return results
 
 
+def specialist_scan(
+    station_id: int = config.PRIMARY_STATION_ID, model_name: str | None = None
+) -> dict:
+    """Phase 1 of the lead axis: does a predictor per lead earn its place?
+
+    Today's model is trained on the 24-hour task, so at a one-hour lead it forecasts from a
+    reading a full day old while a fresh one sits in hand. A specialist for lead ``l`` may
+    legally use ``pm25_lag_l`` — that reading. This measures whether doing so beats **both**
+    fixed references at each lead, which is the gate reformulated: the roadmap wrote it against
+    ``max(model, naive)`` picked on the same folds that then score it, and the max of two noisy
+    estimates reads better than it behaves.
+    """
+    conn = db.connect()
+    try:
+        pm25 = db.read_pm25(conn, station_id)
+        weather_df = db.read_weather(conn)
+    finally:
+        conn.close()
+
+    name = model_name or _deployed_model_name()
+    print(f"[specialists] measuring {name} at {len(config.FORECAST_LEADS)} leads "
+          f"({config.CV_SPLITS} folds each, against the deployed model and the naive rule)")
+    result = specialists.measure(pm25, weather_df, name)
+
+    for record in result["by_lead"]:
+        incumbent, naive = record["vs_incumbent"], record["vs_naive"]
+        clears = "earns it" if record["lead"] in result["gate"]["leads_clearing"] else ""
+        print(f"[specialists] +{record['lead']:2d}h  specialist {record['specialist_mae']:6.3f}  "
+              f"model {record['incumbent_mae']:6.3f}  naive {record['naive_mae']:6.3f}  |  "
+              f"vs model {incumbent['mean']:+6.3f} ({incumbent['model_wins']}/"
+              f"{incumbent['n_folds']})  vs naive {naive['mean']:+6.3f} "
+              f"({naive['model_wins']}/{naive['n_folds']})  {clears}")
+
+    gate = result["gate"]
+    print(f"[specialists] gate: {gate['verdict'].upper()} — {len(gate['leads_clearing'])} of "
+          f"{gate['leads_measured']} leads clear both references on at least "
+          f"{gate['folds_required']} folds; {gate['majority_needed']} needed")
+    # The lead the whole measurement is anchored on: at +24h the specialist matrix IS today's,
+    # so a non-zero difference there would mean the instrument is measuring itself, not a gain.
+    control = next((r for r in result["by_lead"] if r["lead"] == config.FORECAST_LEADS[-1]), None)
+    if control:
+        print(f"[specialists] control at +{control['lead']}h (identical matrices): "
+              f"{control['vs_incumbent']['mean']:+.3f} µg/m³")
+    return result
+
+
 def predict(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Forecast PM2.5 for the next 24h (training + saving a model first if none exists)."""
     try:
@@ -424,6 +470,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="candidates to score (default: the whole registry — a feature can help one "
              "family and hurt another)",
     )
+    spec_cmd = sub.add_parser(
+        "specialists", help="phase 1: does a predictor per lead beat both references?"
+    )
+    spec_cmd.add_argument(
+        "--model", dest="model_name", default=None,
+        help="candidate to measure (default: whatever the saved bundle deployed)",
+    )
     sub.add_parser("predict", help="forecast PM2.5 for the next 24h (live)")
     all_cmd = sub.add_parser("all", help="ingest then train")
     all_cmd.add_argument("--days", type=int, default=365)
@@ -447,6 +500,8 @@ def main(argv: list[str] | None = None) -> None:
         importance(model_name=args.model_name)
     elif args.command == "ab":
         ab(experiment=args.experiment, model_names=args.model_names)
+    elif args.command == "specialists":
+        specialist_scan(model_name=args.model_name)
     elif args.command == "predict":
         predict()
     elif args.command == "all":

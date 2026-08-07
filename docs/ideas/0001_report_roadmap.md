@@ -582,6 +582,77 @@ therefore not obviously the right one — see the entry itself.
    RandomForest and ~8 min with it, on top of a daily job that runs ~9 min today — for a
    candidate that wins no lead in the table above. Drop it from the multi-horizon path.
 
+   ### Phase 1 — measured, and the gate clears
+
+   *`forecast/specialists.py`, `pipeline specialists`. This is the **measurement**; serving is
+   a separate change and nothing on the page moves yet.*
+
+   **The gate had to be reformulated before anything could be measured against it.** As written
+   above it compares the specialist to `max(today's model, naive)` — but that max is taken over
+   the same folds that then score the comparison, so the reference is the better of two noisy
+   estimates and reads better than it will behave. A winner's curse, one level down from the
+   one `select_model` exists to avoid.
+
+   The fix needs no nested cross-validation: require the specialist to beat **both fixed
+   references separately** at the same lead, on the same rows and folds. That is at least as
+   strong as beating their maximum and it selects nothing on the rows it scores. A lead where
+   the references disagree is exactly where the max would have been *chosen* — now both bars
+   have to be cleared instead of the taller one being picked after the fact.
+
+   **The lever, mechanically.** Today's model is trained on the 24-hour task, so its freshest
+   input is `pm25_lag_24`: at a one-hour lead it forecasts from a reading a full day old while
+   a fresh one sits in hand. A specialist for lead `l` may legally use `pm25_lag_l` — that
+   reading. The matrix is built by the *existing* feature builder with `horizon=l` and the lag
+   set floored at `l`, so the rolling window ends at the origin too. Nothing is re-implemented;
+   a second feature path is how a leak gets in.
+
+   HistGradientBoosting, 5 folds, ~8.57k rows per lead, all three predictors on identical rows:
+
+   | Lead | Specialist | Deployed model | Naive | vs model | vs naive | Earns it |
+   |------|:----------:|:--------------:|:-----:|:--------:|:--------:|:--------:|
+   | +1 h  | 4.138 | 6.998 | **3.750** | +2.860 (5/5) | −0.388 (2/5) | no |
+   | +3 h  | 5.427 | 6.998 | 5.517 | +1.571 (5/5) | +0.090 (2/5) | no |
+   | +4 h  | 5.605 | 7.058 | 6.217 | +1.454 (5/5) | +0.613 (3/5) | no |
+   | +5 h  | **5.875** | 7.069 | 6.735 | +1.194 (5/5) | +0.860 (4/5) | **yes** |
+   | +6 h  | **6.017** | 7.010 | 7.202 | +0.993 (5/5) | +1.185 (5/5) | **yes** |
+   | +12 h | **6.556** | 7.025 | 8.515 | +0.469 (4/5) | +1.959 (5/5) | **yes** |
+   | +17 h | **6.686** | 7.017 | 8.911 | +0.331 (5/5) | +2.225 (5/5) | **yes** |
+   | +18 h | 6.863 | 6.991 | 8.935 | +0.128 (3/5) | +2.072 (5/5) | no |
+   | +21 h | 7.050 | 6.982 | 8.747 | −0.068 (2/5) | +1.697 (5/5) | no |
+   | +24 h | 6.966 | 6.966 | 8.607 | **+0.000 (0/5)** | +1.640 (5/5) | no |
+
+   **Gate: PASS — 16 leads of 24 clear both references on ≥4 folds of 5, against 13 needed.**
+
+   **The +24 h row is the control, and it is what makes the rest readable.** At the full horizon
+   the specialist matrix *is* today's matrix, so the two are the same model on the same rows.
+   The measured difference there is exactly **0.000 on 0 of 5 folds** — every fold a tie. An
+   instrument that produced anything else there would be reporting its own noise, and no other
+   row could be believed. Pinned by a test rather than observed once.
+
+   **The shape is the evidence, not any single tally.** This run makes 48 paired comparisons,
+   and by this document's own multiplicity rule a handful of those clear a bar by chance. What
+   chance does not produce is a *monotone decay from +2.86 at lead 1 to exactly 0.00 at lead 24*
+   with a known mechanism behind it: `pm25_lag_l` converges on `pm25_lag_24`, which the
+   incumbent already has, so the specialist's advantage has to vanish precisely where it does.
+
+   **What is worth serving, and it is a contiguous band.** Phase 0's argument against 24
+   independent argmins applies unchanged — that would be a best-of-N on the folds that also
+   produce the published figures. The longest unbroken run of leads clearing both bars is
+   **+5 h to +17 h**, 13 leads. Against today's policy that is worth **0.330 µg/m³ averaged over
+   the 24 published hours** — the roadmap priced phase 1 at ≈0.40, so the estimate was fair and
+   slightly optimistic. Extending the band to +24 h would add **0.022**, which is why the band
+   is the right shape rather than a compromise.
+
+   Below +5 h the naive rule keeps its hours: the specialist reaches 4.138 at lead 1 against
+   persistence's 3.750 and loses outright. Phase 0's prefix was not made redundant by phase 1,
+   which is the second thing worth carrying — the freshest observation is *most* of the answer
+   at short leads, and a model that also has it still cannot beat simply repeating it.
+
+   **Not shipped by this change.** Serving 13 specialists means a bundle carrying 13 estimators,
+   a per-lead selection path, a schema break, and a report that can describe three bands rather
+   than two. That is the next change, and it should be sequenced with item 6 in mind — a
+   specialist per lead is also what makes per-lead prediction intervals cheap.
+
 6. **Prediction intervals.** sklearn ≥1.5 is pinned, so
    `HistGradientBoostingRegressor(loss="quantile")` is two extra fits — but on RF it needs
    per-tree spread or a third-party quantile forest. Sequence after the model choice, now settled.
