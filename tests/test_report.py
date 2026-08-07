@@ -986,10 +986,16 @@ def test_render_page_falls_back_to_grey_for_a_category_the_palette_never_saw():
     ids=["empty", "all_nan", "legacy_bundle"],
 )
 def test_render_page_never_leaks_nan_or_none_onto_the_public_page(metadata):
+    """What leaks is a float repr — a standalone `nan`, `inf`, `-inf` or `None` token.
+
+    Matched on word boundaries rather than as substrings: bare `in "inf"` also fires on
+    "information" and `in "nan"` on "maintenance", so the plain version fails on correct
+    English prose while catching nothing extra. It did exactly that when the rejected-results
+    section was added.
+    """
     prose = _prose_only(_page(metadata))
-    assert "nan" not in prose
-    assert "None" not in prose
-    assert "inf" not in prose
+    leaked = re.findall(r"(?<![\w-])-?(?:nan|inf|None)(?![\w-])", prose)
+    assert not leaked, f"float repr reached the page: {sorted(set(leaked))}"
 
 
 @pytest.mark.parametrize(
