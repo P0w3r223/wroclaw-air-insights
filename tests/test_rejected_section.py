@@ -63,17 +63,18 @@ def test_the_comparison_is_dropped_rather_than_printed_when_unusable(mae_mean):
     assert "the same figure this run reports" not in prose
 
 
-def test_render_survives_a_bundle_with_no_metadata_at_all():
+def test_render_survives_a_bundle_with_no_metadata_at_all(leaks):
     prose = _prose(rejected_section.render({}))
     assert rejected_section.MEASUREMENT_WINDOW in prose
-    assert "nan" not in prose
+    assert not leaks(prose)
 
 
 @pytest.mark.parametrize("metadata", [{}, _metadata(6.97), _metadata(7.34)])
-def test_render_never_leaks_nan_or_none_onto_the_public_page(metadata):
-    prose = _prose(rejected_section.render(metadata))
-    assert "nan" not in prose.lower()
-    assert "None" not in prose
+def test_render_never_leaks_nan_or_none_onto_the_public_page(metadata, leaks):
+    """Word-boundary matched, per `conftest` — this section's own prose contains the word
+    "information", which a substring check for "inf" trips on. It did."""
+    leaked = leaks(_prose(rejected_section.render(metadata)))
+    assert not leaked, f"float repr reached the page: {sorted(set(leaked))}"
 
 
 def test_render_does_not_mutate_the_metadata_it_is_handed():
