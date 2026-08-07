@@ -15,6 +15,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import matplotlib
+import pandas as pd
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -586,24 +587,31 @@ def _glossary(metadata: dict) -> str:
 </details>"""
 
 
-def generate_report(
-    station_id: int = config.PRIMARY_STATION_ID, output_path: Path | None = None
-) -> Path:
-    """Build the HTML report and write it to ``output_path`` (default reports/site/)."""
-    output_path = output_path or _DEFAULT_REPORT_PATH
-    forecast_df = serving.predict_next_24h(station_id)
-    aqi = gios.fetch_aqindex(station_id)
-    metadata = model.load_model()["metadata"]
+def _render_page(
+    station_id: int,
+    forecast_df: pd.DataFrame,
+    aqi: dict,
+    metadata: dict,
+    generated_at: datetime,
+) -> str:
+    """Compose the page HTML from inputs that have already been fetched.
+
+    Pure by construction — no network, no clock, no filesystem; ``generate_report``
+    owns all three. That is what makes the assembled page testable, including the
+    legacy-metadata normalisation below, which previously could only be reached
+    through a live GIOŚ call plus a saved bundle.
+    """
     # Older bundles stored the split metrics only under "metrics"; normalise so the
-    # section builders can read one key.
-    metadata.setdefault("model", metadata.get("metrics", {}))
+    # section builders can read one key. Copied rather than mutated in place: the
+    # caller's metadata is not this function's to rewrite.
+    metadata = {**metadata, "model": metadata.get("model", metadata.get("metrics", {}))}
 
     overall = aqi.get("overall", {})
     category = overall.get("category") or "Brak indeksu"
     colour = _AQI_COLORS.get(category, "#9e9e9e")
     chart_b64 = _forecast_chart(forecast_df)
     peak = forecast_df["predicted_pm25"].max()
-    generated = datetime.now(ZoneInfo(config.TIMEZONE)).strftime("%Y-%m-%d %H:%M %Z")
+    generated = generated_at.strftime("%Y-%m-%d %H:%M %Z")
 
     metrics_table = _metrics_table(metadata)
     verdict = _verdict(metadata)
@@ -703,6 +711,21 @@ def generate_report(
 </body>
 </html>
 """
+    return html
+
+
+def generate_report(
+    station_id: int = config.PRIMARY_STATION_ID, output_path: Path | None = None
+) -> Path:
+    """Build the HTML report and write it to ``output_path`` (default reports/site/)."""
+    output_path = output_path or _DEFAULT_REPORT_PATH
+    html = _render_page(
+        station_id=station_id,
+        forecast_df=serving.predict_next_24h(station_id),
+        aqi=gios.fetch_aqindex(station_id),
+        metadata=model.load_model()["metadata"],
+        generated_at=datetime.now(ZoneInfo(config.TIMEZONE)),
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
     return output_path
