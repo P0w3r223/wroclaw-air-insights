@@ -18,12 +18,14 @@ src/wroclaw_air_insights/
     baseline.py        # naive rules + their published labels
     model.py           # split, selection, rolling CV, paired_delta, bundle persistence
     horizon.py         # per-lead scoring and the serving policy (which predictor answers which hour)
+    ab.py              # feature-idea A/B on shared rows and folds; the verdict rule for a gain
     serving.py         # live next-24h forecast from the saved bundle
   charts.py            # matplotlib figures as base64
   formatting.py        # the n/a gate every published number passes
   horizon_section.py   # the lead-axis section of the report
+  rejected_section.py  # what was measured and not shipped (a dated record, not recomputed)
   report.py            # page composition; _render_page is pure, generate_report does the I/O
-  pipeline.py          # CLI: ingest / train / compare / importance / predict / all
+  pipeline.py          # CLI: ingest / train / compare / importance / ab / predict / all
 notebooks/01_analysis.ipynb
 tests/                 # pytest
 docs/ideas/            # roadmap: measured results, including the rejected ones
@@ -41,8 +43,18 @@ These override convenience. Each one exists because the project already got it w
 - **Judge a comparison on the paired per-fold difference** (`model.paired_delta`), not on the
   spread of MAE levels. That spread is seasonal and common to every predictor on those folds,
   so testing against it would call this project's own headline a null. A delta that changes
-  sign across folds is a null result — publish it as one. Worked reasoning and the two
-  outstanding nulls: `docs/ideas/0001_report_roadmap.md`.
+  sign across folds is a null result — publish it as one. Worked reasoning:
+  `docs/ideas/0001_report_roadmap.md`.
+- **The bar depends on whether nothing is an option.** A feature change can simply not happen,
+  so it earns its column only if *no* fold contradicts it (`ab.verdict`). Some predictor has to
+  answer a given hour, so the serving policy hands it over on a *majority* of folds
+  (`horizon._model_earns_the_lead`). The two rules disagree on cases that occur here — do not
+  collapse them into one function.
+- **Count the comparisons before believing one.** A sign-consistent verdict over 5 folds is a
+  1-in-16 event under a change that does nothing — and **ties raise that rate, not lower it**,
+  since a tie cannot contradict. At this project's own tie rate a grid of a dozen expects ~1.4
+  such results from noise. `pipeline ab` prints the expectation per table and for the whole
+  run; weigh a survivor by whether anything predicted it *in advance*, not by the sweep.
 - **Measure importance by removal, on held-out rows, by group** (`pipeline importance`).
   Near-duplicate columns mask each other, and impurity `feature_importances_` disagrees with
   held-out measurement here. Name the estimator beside any ranking.
@@ -76,6 +88,7 @@ pytest
 python -m wroclaw_air_insights.pipeline all --days 365    # ingest + train
 python -m wroclaw_air_insights.pipeline compare           # candidates + naive rules on shared folds
 python -m wroclaw_air_insights.pipeline importance        # held-out importance by source
+python -m wroclaw_air_insights.pipeline ab                # feature idea vs current set, paired
 python -m wroclaw_air_insights.pipeline predict           # live next-24h forecast
 python -m wroclaw_air_insights.report                     # build the Pages HTML
 ```
