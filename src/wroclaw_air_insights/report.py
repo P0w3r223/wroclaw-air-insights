@@ -14,8 +14,8 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from wroclaw_air_insights import charts, config, horizon_section, rejected_section
-from wroclaw_air_insights.forecast import baseline, model, serving
+from wroclaw_air_insights import charts, config, horizon_section, regime_section, rejected_section
+from wroclaw_air_insights.forecast import baseline, model, prospective, serving
 from wroclaw_air_insights.formatting import fmt as _fmt
 from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
 from wroclaw_air_insights.formatting import number as _number
@@ -259,91 +259,6 @@ def _verdict(metadata: dict) -> str:
 
     return f'<p class="verdict">{headline}{caveat}</p>'
 
-
-def _regime_row(label: str, model_regime: dict, naive_regime: dict) -> str:
-    """One regime row: the model beside the naive rule, error and direction for each."""
-    count = model_regime.get("n")
-    hours = f"{count:,} hours" if isinstance(count, int) else "—"
-    return f"""    <tr>
-      <td>{label}<br><span class="hint">{hours}</span></td>
-      <td>{_fmt(model_regime.get('mae'))}</td>
-      <td>{_fmt_signed(model_regime.get('bias'))}</td>
-      <td>{_fmt(naive_regime.get('mae'))}</td>
-      <td>{_fmt_signed(naive_regime.get('bias'))}</td>
-    </tr>
-"""
-
-
-def _detection_line(detection: dict, elevated: dict, threshold: float, naive: dict) -> str:
-    """How many of the polluted hours the forecast actually called, and at what cost."""
-    hit_rate = _number(detection.get("hit_rate"))
-    false_alarm = _number(detection.get("false_alarm_ratio"))
-    if hit_rate is None:
-        return ""
-
-    naive_hit = _number((naive or {}).get("hit_rate"))
-    against = f" (the naive rule: {100 * naive_hit:.0f}%)" if naive_hit is not None else ""
-    total = elevated.get("n")
-    counted = f"{total:,} hours" if isinstance(total, int) else "the hours"
-
-    cost = ""
-    if false_alarm is not None:
-        naive_false = _number((naive or {}).get("false_alarm_ratio"))
-        naive_cost = (
-            f", against {100 * naive_false:.0f}% for the naive rule"
-            if naive_false is not None
-            else ""
-        )
-        cost = (
-            f" The warnings are not free: <strong>{100 * false_alarm:.0f}%</strong> of the "
-            f"hours it flagged turned out to be below the line{naive_cost}."
-        )
-    return (
-        f"<p class=\"skill\">Of the {counted} that actually reached "
-        f"{threshold:.0f} µg/m³, the forecast flagged "
-        f"<strong>{100 * hit_rate:.0f}%</strong>{against}.{cost}</p>"
-    )
-
-
-def _regime_section(metadata: dict) -> str:
-    """Error split at the WHO guideline level — the hours the forecast exists for.
-
-    An average over every hour is dominated by calm ones, because calm ones are most of
-    them. Splitting at the line the chart already draws shows the two failure directions
-    separately, and they turn out to point opposite ways: high when the air is clean, low
-    when it is not. That is regression toward the mean, and a single bias figure — which
-    nets the two against each other — makes it invisible.
-    """
-    regime = metadata.get("regime") or {}
-    naive = metadata.get("regime_persistence") or {}
-    clean, elevated = regime.get("clean") or {}, regime.get("elevated") or {}
-    if not clean.get("n") and not elevated.get("n"):
-        return ""
-
-    # `or` would swallow a stored 0.0 and silently relabel the table with the WHO level.
-    stored_threshold = _number(regime.get("threshold"))
-    threshold = config.PM25_WHO_DAILY if stored_threshold is None else stored_threshold
-    rows = _regime_row(
-        f"Below {threshold:.0f} µg/m³", clean, (naive.get("clean") or {})
-    ) + _regime_row(
-        f"At or above {threshold:.0f} µg/m³", elevated, (naive.get("elevated") or {})
-    )
-    detection = _detection_line(
-        regime.get("detection") or {}, elevated, threshold, naive.get("detection") or {}
-    )
-
-    return f"""  <h3>How it behaves when the air is actually bad</h3>
-  <table class="metrics regimes">
-    <thead>
-      <tr><th>Hours</th><th>MAE ↓</th><th>Bias →0</th><th>Naive MAE</th><th>Naive bias</th></tr>
-    </thead>
-    <tbody>
-{rows}    </tbody>
-  </table>
-  <p class="hint">Split by what was <em>measured</em>, not by what was predicted.
-  {threshold:.0f} µg/m³ is the WHO 24-hour guideline level, used here as a reference for
-  hourly readings — not as a compliance test, which would apply to daily means.</p>
-  {detection}"""
 
 
 def _year_round_skill(metadata: dict) -> str:
@@ -655,7 +570,7 @@ def _render_page(
     horizon_section = _horizon_section(metadata)
     rejected = _rejected_section(metadata)
     backtest_section = _backtest_section(metadata)
-    regime_section = _regime_section(metadata)
+    regime_html = regime_section.render(metadata)
     glossary = _glossary(metadata)
     n_test = metadata.get("n_test")
     tested_on = f" ({n_test:,} held-out hours)" if isinstance(n_test, int) else ""
@@ -745,7 +660,7 @@ def _render_page(
   {skill_line}
 {horizon_section}
 {backtest_section}
-{regime_section}
+{regime_html}
 {rejected}
 {glossary}
 </div>
@@ -762,21 +677,52 @@ def _render_page(
 
 
 def generate_report(
-    station_id: int = config.PRIMARY_STATION_ID, output_path: Path | None = None
+    station_id: int = config.PRIMARY_STATION_ID,
+    output_path: Path | None = None,
+    log_path: Path | None = None,
 ) -> Path:
-    """Build the HTML report and write it to ``output_path`` (default reports/site/)."""
+    """Build the HTML report and write it to ``output_path`` (default reports/site/).
+
+    When ``log_path`` is given, the forecast that was *rendered* is also appended to the
+    prospective log — the same frame, not a second call to the predictor. Re-predicting for the
+    log would usually agree and occasionally not, because a new observation moves the origin,
+    and the log would then be grading a forecast the page never showed.
+
+    Logging never fails the build. A page that did not publish is worse than a day missing from
+    the log, and the log exists to be read months from now rather than to gate a deploy.
+    """
     output_path = output_path or _DEFAULT_REPORT_PATH
+    forecast_df = serving.predict_next_24h(station_id)
+    metadata = model.load_model()["metadata"]
+    generated_at = datetime.now(ZoneInfo(config.TIMEZONE))
     html = _render_page(
         station_id=station_id,
-        forecast_df=serving.predict_next_24h(station_id),
+        forecast_df=forecast_df,
         aqi=gios.fetch_aqindex(station_id),
-        metadata=model.load_model()["metadata"],
-        generated_at=datetime.now(ZoneInfo(config.TIMEZONE)),
+        metadata=metadata,
+        generated_at=generated_at,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
+
+    if log_path is not None:
+        try:
+            total = prospective.append_forecast(
+                log_path, forecast_df, generated_at, metadata, station_id
+            )
+            print(f"[report] forecast log -> {log_path} ({total} rows)")
+        except OSError as error:
+            print(f"[report] WARNING: could not write the forecast log: {error}")
     return output_path
 
 
 if __name__ == "__main__":
-    print("wrote", generate_report())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="build the published report")
+    parser.add_argument(
+        "--log", dest="log_path", type=Path, default=None,
+        help="append the published forecast to this JSONL log (prospective evaluation)",
+    )
+    args = parser.parse_args()
+    print("wrote", generate_report(log_path=args.log_path))
