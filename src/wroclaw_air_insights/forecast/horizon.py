@@ -94,6 +94,11 @@ def _model_earns_the_lead(record: dict) -> bool:
     is not something to serve. Ties count against the model — an hour it cannot separate
     itself on is an hour the simpler rule keeps, which is the conservative direction for a
     published forecast.
+
+    Deliberately a weaker bar than :func:`ab.verdict` uses on a feature change, and the
+    difference is the question, not the taste. Some predictor has to answer this hour, so a
+    majority decides it; a feature change can simply not happen, so there the bar is that no
+    fold contradicts it.
     """
     delta = record["delta"]
     return delta["model_wins"] * 2 > delta["n_folds"]

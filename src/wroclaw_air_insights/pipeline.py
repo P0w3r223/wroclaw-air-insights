@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from wroclaw_air_insights import clean, config, db
+from wroclaw_air_insights.forecast import ab as ab_harness
 from wroclaw_air_insights.forecast import features, horizon, model, serving
 from wroclaw_air_insights.ingest import gios, weather
 
@@ -293,6 +294,64 @@ def importance(
     return {"groups": grouped, "per_column": per_column}
 
 
+def _print_ab_result(experiment: str, result: dict) -> None:
+    """One block per estimator: the level for context, the paired difference for the verdict."""
+    columns = ", ".join(f"{name} ({n})" for name, n in result["columns"].items())
+    print(f"[ab] {experiment}: {result['n_rows']} shared rows, "
+          f"{result['n_splits']} folds, variants (feature count): {columns}")
+    for model_name, block in result["by_model"].items():
+        reference_mae = block["reference_cv"]["mae_mean"]
+        print(f"[ab]   {model_name}: {result['reference']} = {reference_mae} µg/m³ CV MAE")
+        for variant, scored in block["variants"].items():
+            delta = scored["delta"]
+            print(f"[ab]     {variant}: {scored['cv']['mae_mean']} µg/m³ "
+                  f"({delta['mean']:+} paired, better on {delta['model_wins']}/"
+                  f"{delta['n_folds']} folds, {delta['ties']} tied) "
+                  f"-> {scored['verdict'].upper()}")
+    print(f"[ab]   {result['n_comparisons']} comparisons in this table; noise alone is "
+          f"expected to produce ~{result['expected_by_chance']} sign-consistent verdicts")
+
+
+def ab(
+    experiment: str = "all",
+    station_id: int = config.PRIMARY_STATION_ID,
+    model_names: list[str] | None = None,
+) -> dict:
+    """Re-measure a feature idea against the current set, paired fold by fold.
+
+    The two ideas this project already rejected were judged by comparing their delta to the
+    spread of MAE levels — a rule since retracted, because that spread is seasonal and shared
+    by every predictor on those folds. This command reproduces both verdicts under the paired
+    rule that replaced it, so the published nulls stop resting on a retracted argument.
+    """
+    conn = db.connect()
+    try:
+        pm25 = db.read_pm25(conn, station_id)
+        weather_df = db.read_weather(conn)
+        pollutants = db.read_pollutants_wide(conn, station_id)
+    finally:
+        conn.close()
+
+    experiments: dict[str, tuple[dict, str]] = {}
+    if experiment in ("all", "wind"):
+        experiments["wind encoding"] = (
+            ab_harness.wind_encoding_variants(pm25, weather_df), "raw",
+        )
+    if experiment in ("all", "pollutants"):
+        experiments["cross-pollutant lags"] = (
+            ab_harness.cross_pollutant_variants(pm25, weather_df, pollutants), "current",
+        )
+
+    results = {}
+    for name, (variants, reference) in experiments.items():
+        result = ab_harness.compare_variants(
+            variants, reference, model_names=model_names, n_splits=config.CV_SPLITS
+        )
+        _print_ab_result(name, result)
+        results[name] = result
+    return results
+
+
 def predict(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Forecast PM2.5 for the next 24h (training + saving a model first if none exists)."""
     try:
@@ -331,6 +390,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--model", dest="model_name", default=None,
         help="candidate to measure (default: whatever the saved bundle deployed)",
     )
+    ab_cmd = sub.add_parser(
+        "ab", help="score a feature idea against the current set, paired fold by fold"
+    )
+    ab_cmd.add_argument(
+        "--experiment", choices=("all", "wind", "pollutants"), default="all",
+        help="which published null to re-measure (default: both)",
+    )
+    ab_cmd.add_argument(
+        "--models", dest="model_names", nargs="+", default=None,
+        help="candidates to score (default: the whole registry — a feature can help one "
+             "family and hurt another)",
+    )
     sub.add_parser("predict", help="forecast PM2.5 for the next 24h (live)")
     all_cmd = sub.add_parser("all", help="ingest then train")
     all_cmd.add_argument("--days", type=int, default=365)
@@ -352,6 +423,8 @@ def main(argv: list[str] | None = None) -> None:
         compare()
     elif args.command == "importance":
         importance(model_name=args.model_name)
+    elif args.command == "ab":
+        ab(experiment=args.experiment, model_names=args.model_names)
     elif args.command == "predict":
         predict()
     elif args.command == "all":
