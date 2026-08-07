@@ -1,7 +1,8 @@
 # Report roadmap — making the Pages report speak to a non-technical reader
 
 Date: 2026-08-06
-Status: draft — second revision (recommendation #1 was measured and **rejected**)
+Status: draft — third revision (both published nulls **re-measured** under the paired rule
+that replaced the retracted fold-spread test; item 14 dropped)
 Author: P0w3r223 + Claude
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
@@ -150,17 +151,123 @@ was itself introduced in PR #3 as a *correction* to an earlier overclaim, and it
 the impurity number. On held-out rows the two halves are co-equal. It has to be fixed, and
 `reports/figures/fig6_importances.png` with it.
 
+## Third revision — both published nulls re-measured under the rule that replaced the retracted one
+
+*The two nulls above were judged by comparing their delta to the ±2.5 spread of MAE levels.
+Phase 0 of item 5 retracted that test and left this note behind: "the two published nulls were
+judged under the old reading and have not been re-measured paired; they stand as unrefuted,
+not as confirmed." This closes that debt, and building the harness to do it is what the
+"Rule" entry above asked for in the first place.*
+
+`forecast/ab.py` scores feature-set variants on **identical rows** (intersected before
+scoring, because a variant that adds a column can lose hours to `dropna` and would otherwise
+be graded on an easier set), **identical folds**, and reports the paired difference per
+candidate estimator. Reproduction check against the tables above: **14 of the 15 published
+cells come back within 0.01 µg/m³**, including every linear one. The exception is
+`HistGradientBoosting` under u/v — 6.982 here against the published 7.06.
+
+*What accounts for that 0.078, measured rather than asserted.* The first draft of this entry
+blamed column order: the original scratch script did not record it and a histogram-binned tree
+is mildly sensitive to it. Measured over 12 random permutations of that exact frame, the cell
+spans 6.982–7.016 — **0.034, well under half the gap** — and the alternative variant shape
+(dropping wind speed) puts it at 7.109, so that is not it either. Column order is part of the
+answer and not the whole of it; the likeliest remainder is a different scikit-learn/numpy
+version in the original script, which is not recoverable. Stated as far as it was checked,
+because asserting a cause a quick check only half-supports is the failure mode this project's
+own rule targets. No verdict turns on it — that cell is a null under either figure.
+
+*One reconstruction detail was load bearing and nearly got it wrong.* "u/v components" reads
+naturally as *replacing* speed and direction, since u and v carry the magnitude between them.
+The published table was measured with speed **kept** as its own column: reconstructed the tidy
+way, Ridge lands on 8.32 rather than the 8.26 printed above. A re-measurement of a published
+verdict has to score the thing that was published, so the harness reproduces the original shape
+and says so in a comment.
+
+CV MAE µg/m³ and the paired verdict, 8 584 rows, 5 folds, same window as above:
+
+| Experiment | Variant | Ridge | HistGradientBoosting *(deployed)* | RandomForest |
+|------------|---------|:-----:|:--------------------------------:|:------------:|
+| wind | raw *(reference)* | 8.189 | **6.966** | 7.182 |
+| wind | u/v | 8.260 · null | 6.982 · null | 7.173 · null |
+| wind | sin/cos | **8.092 · improvement** | 7.030 · null | 7.189 · null |
+| pollutants | current *(reference)* | 8.189 | **6.966** | 7.182 |
+| pollutants | + NO2/CO lag 24 | 8.151 · null | 6.984 · null | **7.137 · improvement** |
+| pollutants | + NO2/CO full history | 8.535 · null | 6.985 · null | 7.123 · null |
+
+The two reference rows are identical here, and that is a fact about this station rather than a
+duplicated row: NO2 and CO have full coverage, so adding them drops no hours and both
+experiments intersect to the same 8 584. A pollutant with gaps would separate them, which is
+why `align_variants` intersects per experiment instead of assuming one shared row set.
+
+**Both shipped decisions are unchanged.** Nothing wins consistently for the deployed model in
+either experiment — the folds disagree in both directions on all four of its variants. The
+nulls were right about what ships.
+
+**Both were wrong as blanket statements, and in the same direction.** Two cells sweep every
+fold that separates them, and neither is the deployed model:
+
+- **sin/cos on Ridge: +0.097 µg/m³, better on 4 folds of 5, one tie, none worse.** This is the
+  candidate the physical argument named *in advance* — the one that structurally cannot read a
+  bearing. The old write-up already noticed the movement ("the largest single effect here, and
+  it is in the helpful direction, on exactly the candidate the physical argument predicted
+  would gain") and then dismissed it with the retracted test. Under the paired rule it clears
+  the bar — on a candidate trailing the deployed model by 1.13 µg/m³, so it changes no decision
+  either way. What it does refute is the blanket wording: "the discontinuity costs nothing" was
+  too strong. It plausibly costs the linear model something, and only the linear model.
+
+  *How much this can carry on its own: not much.* Four wins, one tie, none against is a sign
+  test at p ≈ 0.06 before any multiplicity adjustment — about the most five folds are able to
+  show. The claim worth making is the scoped one (*who* it affects), not a quantified gain.
+- **NO2/CO at lag 24 on RandomForest: +0.044 µg/m³, better on 5 folds of 5.** No fold against,
+  worth four hundredths, on a candidate that has never won a selection — and predicted by
+  nothing in advance. See the multiplicity note below: this is the one that reads as noise.
+
+**The multiplicity caveat, and the first version of it was wrong in the flattering direction.**
+The verdict rule asks that no fold *contradict* the direction; under a change that does nothing
+and never ties, each fold's sign is a coin flip and a clean sweep is a **1-in-16** event at five
+folds. Twelve comparisons then expect 0.75 sweeps from noise, "and it found two" — which is how
+this entry originally read, and it made the two survivors look like more than chance provides.
+
+**Ties raise the sweep rate, they do not lower it,** because a tie is not a contradiction: it
+removes a chance to fail. With per-fold tie probability `t` the rate is
+`2 · (((1+t)/2)^n − t^n)`, above `2/2^n` for every `t > 0`. This run tied **8 of its 60 folds**,
+so the rate is 0.117 per comparison and twelve comparisons expect **~1.4** sweeps. It found two.
+Verified analytically and by simulation (0.1164 against 0.1168 predicted), and it is still a
+*floor*: rolling-origin folds share training rows, so their signs are positively correlated,
+which pushes it higher again.
+
+So the count of survivors is what chance gives, and neither result is evidence on its own. The
+only thing that separates them is what was predicted beforehand — the Ridge result was named in
+advance by a physical argument, the RandomForest result by nothing at all — and even the Ridge
+one is 4 of 5 with a tie, about the most five folds can show. `ab.expected_by_chance` takes the
+run's own tie rate and `pipeline ab` prints a run-level line after the last table, because a
+reader picking a survivor is choosing from every comparison the run made, not from one table's
+six.
+
+**One consequence for the methodology, and it argues against a change rather than for one.**
+The A/B verdict rule is deliberately *stricter* than the serving policy's: `horizon` hands a
+lead to whichever predictor wins a majority of folds, because some predictor has to answer that
+hour; a feature change can simply not happen, so there the bar is that no fold contradicts it.
+The two disagree on real cases here — NO2/CO at lag 24 under Ridge wins 3 folds of 5 and loses
+one, which the serving rule would call a win and the A/B rule calls a null. Sharing one function
+between them was tried and reverted; the docstrings on both now say why they differ.
+
 ## Recommendations
 
 Ordered so that every credibility gap closes before anything cosmetic is added.
 
 ### Rule for anything in this list that claims an accuracy gain
 
-State the CV MAE delta **next to the fold spread**, and treat a delta inside the spread as
-a null result to be published, not buried. Item #1 above cost a few minutes to measure and
-would have cost a reviewer's trust to ship on reasoning alone. The A/B harness that settled
-it should become a small module rather than a scratch script, so the next feature idea is
-one command, not one argument.
+~~State the CV MAE delta **next to the fold spread**, and treat a delta inside the spread as
+a null result.~~ **Retracted — see the third revision below.** That test compares against the
+spread of MAE *levels*, which is seasonal and common to every predictor scored on those folds;
+by it, this project's own headline is a null. The rule is now the mean and sign of the per-fold
+*difference* (`model.paired_delta`), and a delta that changes sign across folds is the null.
+
+The rest of the entry stands. Item #1 cost a few minutes to measure and would have cost a
+reviewer's trust to ship on reasoning alone, and the A/B harness that settled it is now a
+module rather than a scratch script — `forecast/ab.py`, run as `pipeline ab`. The next feature
+idea is one command, not one argument.
 
 ### Next — close the remaining credibility gaps
 
@@ -557,11 +664,19 @@ already drifted.*
 
 ### Re-scoped
 
-14. **Three-station comparison is not available as described.** `docs/research/data-sources.md`
-    is explicit: station 115's PM2.5 is manual (`getData` → `API-ERR-100003`, archive only,
-    4–8 week delay) and station 114 has no PM2.5 at all. Options are 129+115 at mismatched
-    resolution and latency in the notebook only, or a traffic-vs-background cross-pollutant
-    comparison using 114's NOx. Pick one or drop the item.
+14. ~~**Three-station comparison.**~~ **Dropped — the data does not support the item, in any
+    of its shapes.** `docs/research/data-sources.md` is explicit: station 115's PM2.5 is manual
+    (`getData` → `API-ERR-100003`, archive only, 4–8 week delay) and station 114 has no PM2.5
+    at all. That leaves 129+115 at mismatched resolution and a 4–8 week latency, which cannot
+    say anything about the hours this project forecasts, or a traffic-vs-background comparison
+    on 114's NOx — a different question, about a pollutant the forecast does not target and the
+    page does not publish.
+
+    Dropped rather than left open. An item that has been re-scoped once and still has no
+    defensible shape reads as an oversight the longer it sits in a list of things to do, and
+    the reason it fails is itself the finding: **the spatial question needs stations this city
+    does not instrument for it.** One automatic PM2.5 sensor is what Wrocław has, and it is
+    what the project is built on.
 
 ## Not doing yet
 

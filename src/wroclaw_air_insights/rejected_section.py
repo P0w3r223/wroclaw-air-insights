@@ -14,8 +14,11 @@ catching on itself.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
+from wroclaw_air_insights import config
+from wroclaw_air_insights.forecast import ab
 from wroclaw_air_insights.formatting import number as _number
 
 # The window all three ran on. The lead-time experiment used the same feature frame expanded
@@ -27,8 +30,19 @@ MEASUREMENT_WINDOW = "2025-07-24 → 2026-07-17"
 # a hardcoded number with no live counterpart is what this section exists to avoid.
 ERROR_WHEN_MEASURED = 6.97
 
-# The fold-to-fold spread on that window — the scale every delta below has to be read against.
-FOLD_SPREAD = 2.5
+# The size of the grid the two surviving positive results were drawn from: three candidate
+# models against two variants apiece, in each of two experiments. Kept beside the entries
+# because the verdict rule asks that no fold contradict a change, and a run this size produces
+# results that clear that bar on its own — see _multiplicity_note.
+MEASURED_COMPARISONS = 12
+MEASURED_TIED_FOLDS = 8
+MEASURED_SCORED_FOLDS = 60
+
+# There used to be a FOLD_SPREAD constant here, and the first two entries below quoted their
+# result against it: "a tenth of a µg/m³ against a ±2.5 spread between folds". That test has
+# since been retracted — the spread of MAE *levels* is seasonal and common to every predictor
+# on those folds, so by that standard this project's own headline is a null too. Both entries
+# were re-measured on the per-fold difference instead, which is what they now state.
 
 
 
@@ -50,14 +64,21 @@ EXPERIMENTS: tuple[Experiment, ...] = (
         ends of the scale. Splitting it into north–south and east–west components is the
         textbook fix.""",
         finding="""Three encodings were scored on identical folds — the raw bearing, u/v
-        components, and sine/cosine. Nothing moved by more than a tenth of a µg/m³ in either
-        direction, and for the deployed model the physically correct encoding was marginally
-        <em>worse</em>. A gradient-boosted tree already carves the circle with a second split,
-        so the break at north costs it essentially nothing. The one candidate that structurally
-        cannot read a bearing — the linear model, which should have gained most — got worse
-        under u/v components; sine/cosine did help it, and that was the largest single effect
-        in the whole table, at a tenth of a µg/m³.""",
-        verdict=f"≤ 0.1 µg/m³ either way, against a ±{FOLD_SPREAD} spread between folds",
+        components, and sine/cosine — then re-scored one test period at a time when this
+        project replaced its test for what counts as a real gain. For the deployed model
+        neither re-encoding wins consistently: whichever way the average leans, some periods
+        go the other way. A gradient-boosted tree already carves the circle with a second
+        split, so the break at north costs it essentially nothing.
+
+        <em>One result did point the other way, on the candidate the physical argument named
+        in advance.</em> The linear model — the single one that structurally cannot read a
+        bearing — came out ahead under sine/cosine in four of the five test periods, with the
+        fifth too close to call and none against. That is about as much as five periods can
+        show, and it still does not reach this page either way: the linear model trails the
+        deployed one by more than a full µg/m³, and winning back a tenth of one does not close
+        a gap that size.""",
+        verdict="nothing consistent for the deployed model; 0.10 µg/m³ to a candidate that "
+                "starts more than a µg/m³ behind it",
     ),
     Experiment(
         title="Adding the other pollutants",
@@ -68,8 +89,14 @@ EXPERIMENTS: tuple[Experiment, ...] = (
         history gets. The argument was right in kind and wrong in magnitude: NO₂ and PM2.5 in
         a city share their sources — traffic, heating, the same boundary layer — so a day-old
         NO₂ reading mostly repeats what the weather columns and yesterday's PM2.5 already
-        carry.""",
-        verdict="≤ 0.06 µg/m³ in either direction",
+        carry. For the deployed model neither variant wins consistently; the test periods
+        disagree in both directions.
+
+        One result did come out ahead in every period — a candidate that is not the one
+        deployed, gaining four hundredths of a µg/m³ from NO₂ and CO. Nothing predicted it in
+        advance, which is the whole of what can be said for it; see the note below the
+        list.""",
+        verdict="nothing consistent for the deployed model",
     ),
     Experiment(
         title="Telling one model how far ahead it is forecasting",
@@ -114,14 +141,46 @@ def _anchor(metadata: dict) -> str:
     return f"""{dated}, against {current:.2f} µg/m³ on the run this page describes. {reason}"""
 
 
+def _paragraphs(text: str) -> str:
+    """Blank-line-separated source text as separate ``<p>`` elements.
+
+    The findings are written with paragraph breaks and HTML collapses whitespace, so a single
+    wrapping ``<p>`` renders two arguments as one run-on block and buries the pivot sentence
+    each of them turns on.
+    """
+    return "\n    ".join(
+        f"<p>{block.strip()}</p>" for block in re.split(r"\n\s*\n", text.strip()) if block.strip()
+    )
+
+
 def _entry(experiment: Experiment) -> str:
     return f"""  <dt>{experiment.title}</dt>
   <dd>
-    <p>{experiment.why}</p>
-    <p>{experiment.finding}</p>
+    {_paragraphs(experiment.why)}
+    {_paragraphs(experiment.finding)}
     <p class="hint">Measured effect: <strong>{experiment.verdict}</strong>.</p>
   </dd>
 """
+
+
+def _multiplicity_note() -> str:
+    """How much weight the two positive results above can carry, given how many were tried.
+
+    Derived rather than written down. The counts are a dated record like everything else here,
+    but the expectation they imply is arithmetic, and stating it as a literal is how a number
+    and the sentence beside it drift apart — the defect this section exists to avoid.
+    """
+    expected = ab.expected_by_chance(
+        MEASURED_COMPARISONS, config.CV_SPLITS, MEASURED_TIED_FOLDS / MEASURED_SCORED_FOLDS
+    )
+    return f"""Two of the results above came out ahead in every period that separated them,
+  and neither is the deployed model. Read them against how many chances there were: the run
+  made <strong>{MEASURED_COMPARISONS}</strong> comparisons in all, and with
+  {MEASURED_TIED_FOLDS} of its {MEASURED_SCORED_FOLDS} periods too close to call, a run that
+  changed nothing at all would be expected to produce about <strong>{expected}</strong> such
+  clean results anyway. So the count is what chance gives, and neither result is evidence on
+  its own. The one that carries any weight is the one a physical argument named
+  <em>before</em> it was measured — and it belongs to a model this page does not serve."""
 
 
 def render(metadata: dict) -> str:
@@ -140,5 +199,6 @@ def render(metadata: dict) -> str:
   figure standing in for twenty-four different tasks.</p>
   <dl class="rejected">
 {entries}  </dl>
+  <p>{_multiplicity_note()}</p>
   <p class="hint">{_anchor(metadata)}</p>
 """

@@ -44,8 +44,9 @@ endpoint details, and the reasoning behind these choices.
 > recomputes the headline error, the model-vs-naive gap, the model selection, the lead axis and
 > the clean/elevated split on every refresh — that is where to read what they come out to today.
 > The candidate comparison and the importance tables are one-off measurements kept here
-> instead, re-runnable with `pipeline compare` and `pipeline importance`; the null result was a
-> bespoke A/B on a re-encoded feature that no command reproduces, and it is recorded in
+> instead, re-runnable with `pipeline compare`, `pipeline importance` and `pipeline ab` — the
+> last of which reproduces both published null results, which until recently were bespoke
+> scripts no command could re-run. The reasoning behind each is in
 > [`docs/ideas/0001_report_roadmap.md`](docs/ideas/0001_report_roadmap.md). Where a *decision*
 > rather than a number can move with the data, the text below describes how the decision is
 > made and leaves the answer to the page.
@@ -198,14 +199,31 @@ pipeline scored but did not select on that run. It is kept as the contrast, not 
 
 ![Feature importances](reports/figures/fig6_importances.png)
 
-**A documented null result.** That impurity ranking put wind *direction* above wind *speed*,
-which suggested the raw 0–360° encoding (discontinuous at north) was costing accuracy.
-Re-encoding it as u/v components and as sin/cos was A/B-tested on the same folds: CV MAE
-moved by no more than 0.10 µg/m³ in either direction against a fold spread of ±2.5, and for
-the deployed model it moved the wrong way. The largest single movement was the linear model
-*improving* by that 0.10 under sin/cos — still a tenth of the noise it would have to clear.
-The change was rejected rather than shipped — see
-[`docs/ideas/0001_report_roadmap.md`](docs/ideas/0001_report_roadmap.md).
+**A documented null result, and what re-testing it changed.** That impurity ranking put wind
+*direction* above wind *speed*, which suggested the raw 0–360° encoding (discontinuous at
+north) was costing accuracy. Re-encoding it as u/v components and as sin/cos was A/B-tested on
+the same folds and rejected.
+
+The rejection was originally argued from the fold spread — "0.10 µg/m³ against ±2.5" — and
+that test has since been **retracted**, because the spread of MAE *levels* is seasonal and
+common to every predictor scored on those folds. Both this null and the cross-pollutant one
+were re-measured on the per-fold *difference* with `pipeline ab`, and the conclusion survives
+where it matters and sharpens where it does not:
+
+- for the **deployed** model, no encoding wins consistently — whichever way the mean leans,
+  some folds go the other way;
+- the **linear** candidate comes out ahead by 0.10 µg/m³ under sin/cos in 4 folds of 5, the
+  fifth tied and none against. Exactly the candidate the physical argument named in advance —
+  and it trails the deployed model by more than a full µg/m³, so the gain has nowhere to land.
+
+**How much weight that second point carries: little, on its own.** Four of five with a tie is
+a sign test at p ≈ 0.06 before any adjustment, and the full run made 12 comparisons of which
+~1.4 sign-consistent results are expected from noise alone — it found 2. So the shipped
+decision is unchanged, and what the re-measurement actually refutes is the *blanket* wording:
+the physical argument was right about **who** would benefit, and "the discontinuity costs
+nothing" was too strong. Full record in
+[`docs/ideas/0001_report_roadmap.md`](docs/ideas/0001_report_roadmap.md); the numbers above are
+a dated record of one run, re-runnable with `pipeline ab`.
 
 The full narrative analysis — seasonality, norm exceedances, an hour × weekday heatmap,
 and weather correlations — is in
@@ -216,9 +234,9 @@ and weather correlations — is in
 ```
 src/wroclaw_air_insights/
   config.py  clean.py  db.py  pipeline.py
-  report.py  charts.py  formatting.py  horizon_section.py   # page composition
+  report.py  charts.py  formatting.py  horizon_section.py  rejected_section.py  # page
   ingest/    gios.py  weather.py
-  forecast/  features.py  baseline.py  model.py  horizon.py  serving.py
+  forecast/  features.py  baseline.py  model.py  horizon.py  serving.py  ab.py
 notebooks/                  # 01_analysis.ipynb — EDA + figures
 tests/                      # pytest — cleaning, parsing, db, forecast, horizon, report
 docs/ideas/                 # roadmap: measured results, including the rejected ones
@@ -247,6 +265,7 @@ python -m wroclaw_air_insights.pipeline ingest --days 365
 python -m wroclaw_air_insights.pipeline train      # train + save the model
 python -m wroclaw_air_insights.pipeline compare    # baselines vs models + rolling CV
 python -m wroclaw_air_insights.pipeline importance # what each source of data is worth
+python -m wroclaw_air_insights.pipeline ab         # score a feature idea, paired fold by fold
 python -m wroclaw_air_insights.pipeline predict    # live next-24h PM2.5 forecast
 python -m wroclaw_air_insights.report              # build the HTML report
 
