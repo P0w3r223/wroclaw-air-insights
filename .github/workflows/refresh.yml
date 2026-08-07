@@ -6,14 +6,25 @@ on:
     - cron: "0 5 * * *"   # 05:00 UTC every day
   workflow_dispatch:
 
+# `contents: write` is for the forecast log below, and for nothing else. The site is deployed
+# through the Pages artifact, not by committing to a branch.
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
+# Also what makes the log's push safe without retry machinery: two refresh runs cannot overlap,
+# so nothing else is pushing to the log branch while this job holds the group. A run cancelled
+# mid-push is recovered by the next one, because appending is idempotent on (station, origin,
+# lead) rather than additive.
 concurrency:
   group: pages
   cancel-in-progress: true
+
+env:
+  # A data branch, not a directory on main: the log is an append-only record with its own
+  # history, and keeping it off main means the daily commit never touches the code history.
+  LOG_BRANCH: forecast-log
 
 jobs:
   build:
@@ -28,11 +39,50 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
+
+      - name: Check out the forecast log
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p .forecast-log
+          cd .forecast-log
+          git init -q
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          # The branch does not exist before the first run ever succeeds, so an orphan history
+          # is the fallback rather than an error. Shallow: the job only appends to the tip.
+          if git fetch -q --depth 1 origin "$LOG_BRANCH"; then
+            git checkout -q -B "$LOG_BRANCH" FETCH_HEAD
+          else
+            echo "no $LOG_BRANCH yet — starting one"
+            git checkout -q --orphan "$LOG_BRANCH"
+          fi
+
       - name: Ingest, train, and build report
         run: |
           python -m wroclaw_air_insights.pipeline ingest --days 365
           python -m wroclaw_air_insights.pipeline train
-          python -m wroclaw_air_insights.report
+          python -m wroclaw_air_insights.report --log .forecast-log/forecasts.jsonl
+
+      - name: Grade the forecasts whose hour has now arrived
+        # Reads the log and the freshly ingested observations. Informational: it prints the
+        # only out-of-sample figures this project has, and must not be able to fail a deploy.
+        continue-on-error: true
+        run: python -m wroclaw_air_insights.pipeline score-log --log .forecast-log/forecasts.jsonl
+
+      - name: Append the published forecast to the log branch
+        # Same reasoning: a page that did not publish is worse than a day missing from a record
+        # meant to be read months from now.
+        continue-on-error: true
+        run: |
+          cd .forecast-log
+          git add -A
+          if git diff --cached --quiet; then
+            echo "the log already holds this forecast — nothing to push"
+            exit 0
+          fi
+          git commit -q -m "log: forecast published $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push -q origin "$LOG_BRANCH"
+
       # v4 stopped including dotfiles in the artifact. Checked before bumping: the built site
       # is a single self-contained index.html and nothing writes a .nojekyll, so nothing is
       # dropped. A site that later needs one must set `include-hidden-files` (added in v5).

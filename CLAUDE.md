@@ -20,13 +20,16 @@ src/wroclaw_air_insights/
     horizon.py         # per-lead scoring and the serving policy (which predictor answers which hour)
     ab.py              # feature-idea A/B on shared rows and folds; the verdict rule for a gain
     specialists.py     # phase 1: a predictor per lead, and the gate it must clear
+    prospective.py     # the forecast log: what was published, graded once the hours arrive
     serving.py         # live next-24h forecast from the saved bundle
   charts.py            # matplotlib figures as base64
   formatting.py        # the n/a gate every published number passes
   horizon_section.py   # the lead-axis section of the report
+  regime_section.py    # the clean/elevated split at the WHO reference level
   rejected_section.py  # what was measured and not shipped (a dated record, not recomputed)
   report.py            # page composition; _render_page is pure, generate_report does the I/O
-  pipeline.py          # CLI: ingest / train / compare / importance / ab / specialists / predict / all
+  pipeline.py          # CLI: ingest / train / compare / importance / ab / specialists /
+                       #      score-log / predict / all
 notebooks/01_analysis.ipynb
 tests/                 # pytest
 docs/ideas/            # roadmap: measured results, including the rejected ones
@@ -92,6 +95,7 @@ python -m wroclaw_air_insights.pipeline importance        # held-out importance 
 python -m wroclaw_air_insights.pipeline ab                # feature idea vs current set, paired
 python -m wroclaw_air_insights.pipeline specialists       # phase 1: per-lead predictors + gate
 python -m wroclaw_air_insights.pipeline predict           # live next-24h forecast
+python -m wroclaw_air_insights.pipeline score-log         # grade the published forecast log
 python -m wroclaw_air_insights.report                     # build the Pages HTML
 ```
 
