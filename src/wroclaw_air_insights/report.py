@@ -7,42 +7,24 @@ can be published to Pages with no external assets.
 
 from __future__ import annotations
 
-import base64
-import io
 from datetime import datetime
-from math import isfinite
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-# Select the headless backend before anything can import pyplot — keep the two lines
-# adjacent so nothing slips in between them.
-import matplotlib
+from wroclaw_air_insights import charts, config, horizon_section
+from wroclaw_air_insights.forecast import baseline, model, serving
+from wroclaw_air_insights.formatting import fmt as _fmt
+from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
+from wroclaw_air_insights.formatting import number as _number
+from wroclaw_air_insights.ingest import gios
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+# The lead-axis section lives in its own module; the page still reaches it by the name every
+# other section builder uses here.
+_horizon_section = horizon_section.render
 
-from wroclaw_air_insights import config  # noqa: E402
-from wroclaw_air_insights.forecast import baseline, model, serving  # noqa: E402
-from wroclaw_air_insights.ingest import gios  # noqa: E402
-
-# --- Chart styling: clean, print-quality matplotlib aligned with the page palette. ---
-_ACCENT = "#2563eb"
-_WHO_LINE = "#d97706"
-_CHART_STYLE = {
-    "figure.facecolor": "white", "axes.facecolor": "white",
-    "axes.edgecolor": "#c3c2b7", "axes.linewidth": 0.8,
-    "axes.spines.top": False, "axes.spines.right": False,
-    "axes.grid": True, "axes.grid.axis": "y", "axes.axisbelow": True,
-    "grid.color": "#e3e7ee", "grid.linewidth": 0.9,
-    "axes.titlesize": 13, "axes.titleweight": "bold", "axes.titlecolor": "#1c2430",
-    "axes.titlepad": 12, "axes.labelcolor": "#667085", "axes.labelsize": 10.5,
-    "text.color": "#1c2430", "xtick.color": "#667085", "ytick.color": "#667085",
-    "xtick.labelsize": 9.5, "ytick.labelsize": 9.5, "font.size": 10.5,
-    "legend.frameon": False, "legend.fontsize": 9.5,
-}
-plt.rcParams.update(_CHART_STYLE)
+_ACCENT = charts.ACCENT  # the page CSS and the figures share one accent colour
 
 # Polish air-quality index categories -> display colour. GIOŚ owns this vocabulary, so a
 # category outside the table falls back to the neutral badge rather than taking the page down.
@@ -59,63 +41,10 @@ _AQI_COLORS = {
 _DEFAULT_REPORT_PATH = config.PROJECT_ROOT / "reports" / "site" / "index.html"
 
 
-def _fig_to_base64(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
-    plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def _forecast_chart(forecast_df) -> str:
-    fig, ax = plt.subplots(figsize=(10, 4))
-    x, y = forecast_df["timestamp"], forecast_df["predicted_pm25"]
-    ax.fill_between(x, y, color=_ACCENT, alpha=0.08, zorder=1)
-    ax.plot(x, y, color=_ACCENT, lw=2.2, marker="o", markersize=5,
-            markerfacecolor="white", markeredgecolor=_ACCENT, zorder=3)
-    ax.axhline(config.PM25_WHO_DAILY, color=_WHO_LINE, ls="--", lw=1.4, zorder=2,
-               label=f"WHO 24h guideline ({config.PM25_WHO_DAILY})")
-    ax.set(title="Predicted PM2.5 — next 24 hours", ylabel="PM2.5 (µg/m³)", xlabel="")
-    ax.margins(x=0.02)
-    ax.legend(loc="upper right")
-    fig.autofmt_xdate()
-    return _fig_to_base64(fig)
-
-
-def _backtest_chart(backtest: dict) -> str | None:
-    """Measured against forecast over the tail of the held-out window.
-
-    Three series on purpose: without the naive rule drawn beside it, a forecast that
-    simply repeats yesterday looks impressive here, because tracking PM2.5 a day late
-    still tracks it.
-    """
-    stamps = [datetime.fromisoformat(t) for t in backtest.get("timestamps") or []]
-    actual, predicted = backtest.get("actual") or [], backtest.get("predicted") or []
-    if not stamps or len(stamps) != len(actual) or len(stamps) != len(predicted):
-        return None
-
-    fig, ax = plt.subplots(figsize=(10, 3.6))
-    ax.fill_between(stamps, actual, color="#1c2430", alpha=0.07, zorder=1)
-    ax.plot(stamps, actual, color="#1c2430", lw=1.8, zorder=3, label="Measured")
-    ax.plot(stamps, predicted, color=_ACCENT, lw=1.8, zorder=4, label="Forecast (24h ahead)")
-
-    naive = backtest.get("naive")
-    if naive and len(naive) == len(stamps):
-        ax.plot(stamps, naive, color="#98a2b3", lw=1.1, ls="--", zorder=2,
-                label=f"Naive — {baseline.LABELS['persistence']}")
-
-    ax.axhline(config.PM25_WHO_DAILY, color=_WHO_LINE, ls=":", lw=1.2, zorder=2)
-    ax.set(title="Forecast against what was measured — held-out hours",
-           ylabel="PM2.5 (µg/m³)", xlabel="")
-    ax.margins(x=0.01)
-    ax.legend(loc="upper right", ncol=3)
-    fig.autofmt_xdate()
-    return _fig_to_base64(fig)
-
-
 def _backtest_section(metadata: dict) -> str:
     """The chart plus the sentence that makes it evidence rather than decoration."""
     backtest = metadata.get("backtest") or {}
-    chart = _backtest_chart(backtest) if backtest.get("timestamps") else None
+    chart = charts.backtest(backtest) if backtest.get("timestamps") else None
     if not chart:
         return ""
 
@@ -135,30 +64,12 @@ def _backtest_section(metadata: dict) -> str:
   recent days would be showing it hours it learned from.</p>"""
 
 
+
 def _station_name(station_id: int) -> str:
     return next((s.name for s in config.STATIONS if s.id == station_id), f"station {station_id}")
 
 
 # --- Model quality section ---------------------------------------------------
-def _fmt(value: object, digits: int = 2) -> str:
-    """Format a metric for the table, or ``n/a`` when it was never recorded."""
-    number = _number(value)
-    return f"{number:.{digits}f}" if number is not None else "n/a"
-
-
-def _number(value: object) -> float | None:
-    """Coerce a stored metric to a usable float, rejecting missing and non-finite values."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value):
-        return float(value)
-    return None
-
-
-def _fmt_signed(value: object, digits: int = 2) -> str:
-    """Format a signed metric, keeping the ``+`` — for bias the direction is the point."""
-    number = _number(value)
-    return f"{number:+.{digits}f}" if number is not None else "n/a"
-
-
 def _row(label: str, metrics: dict, css_class: str = "") -> str:
     """One predictor row, or nothing at all when the metrics were never recorded."""
     if not metrics:
@@ -426,6 +337,44 @@ def _skill_line(metadata: dict) -> str:
     return f'<p class="skill">{year_round}{window}</p>'
 
 
+def _selection_margin(scores: dict, winner: str, runner_up: str | None) -> str:
+    """How close the selection was, judged fold by fold rather than against the spread.
+
+    This sentence used to compare the winner's margin to the ±spread between folds. That
+    is the reasoning this project now treats as wrong — the spread is seasonal and common
+    to every candidate, so by that test the model's own win over the naive rule would be a
+    null too. The page cannot carry the corrected argument in one section and the refuted
+    one in another.
+    """
+    if not runner_up or runner_up not in scores:
+        return ""
+    won_by = _number(scores[winner].get("mae_mean"))
+    rival = _number(scores[runner_up].get("mae_mean"))
+    winner_folds = scores[winner].get("fold_mae") or []
+    rival_folds = scores[runner_up].get("fold_mae") or []
+    if None in (won_by, rival) or len(winner_folds) != len(rival_folds) or not winner_folds:
+        return ""
+
+    delta = model.paired_delta(rival_folds, winner_folds)
+    wins, folds = delta["model_wins"], delta["n_folds"]
+    ties = f", {delta['ties']} tied" if delta["ties"] else ""
+    # Keyed on losses, not on wins: "4 won, 1 tied, none lost" is a claim that never points
+    # the other way, and calling that "close" would understate it exactly as badly as
+    # calling a 4-1 split decisive would overstate it.
+    verdict = (
+        "and it never came out behind on a fold"
+        if delta["model_losses"] == 0
+        else "so read it as “these two are close”, not as a decisive result"
+    )
+    # The margin is the *difference*, not the winner's own error. The previous wording
+    # apposed the winner's MAE to the phrase "a slim margin", which read as though the model
+    # won by 6.97 µg/m³ — a number the reader could refute by subtracting the two beside it.
+    return (
+        f" It came out {delta['mean']:.2f} µg/m³ ahead of {runner_up} — {won_by:.2f} against "
+        f"{rival:.2f} — winning {wins} of {folds} folds{ties}, {verdict}."
+    )
+
+
 def _selection_note(metadata: dict) -> str:
     """How the deployed model was chosen — including how close the decision was.
 
@@ -439,17 +388,7 @@ def _selection_note(metadata: dict) -> str:
         return ""
 
     candidates = ", ".join(scores)
-    won_by = _number(scores[winner].get("mae_mean"))
-    spread = _number(scores[winner].get("mae_std"))
-    rival = _number((scores.get(runner_up) or {}).get("mae_mean"))
-
-    margin = (
-        f" It won by a slim margin — {won_by:.2f} µg/m³ against {runner_up}’s "
-        f"{rival:.2f} — narrower than the ±{spread:.2f} swing between folds, so read it as "
-        f"“these two are close”, not as a decisive result."
-        if None not in (won_by, rival, spread) and runner_up
-        else ""
-    )
+    margin = _selection_margin(scores, winner, runner_up)
     return f"""<p class="note"><strong>How this model was chosen.</strong> Three candidates
   ({candidates}) were scored by rolling-origin cross-validation and <strong>{winner}</strong>
   came out ahead. The choice deliberately runs on cross-validation rather than on the window
@@ -617,9 +556,12 @@ def _render_page(
     overall = aqi.get("overall", {})
     category = overall.get("category") or "Brak indeksu"
     colour = _AQI_COLORS.get(category, _NEUTRAL_BADGE)
-    chart_b64 = _forecast_chart(forecast_df)
-    # The peak is the largest number on the page, and it comes from the frame rather than
-    # from the metadata — so it needs the same gate every stored metric already passes.
+    chart_b64 = charts.forecast(forecast_df)
+    # The largest number on the page, and it comes from the frame rather than from the
+    # metadata — so it needs the same gate every stored metric already passes. Called the
+    # highest hour rather than the forecast peak because the earliest hours may be the
+    # current reading repeated: on a falling day this would otherwise label a measurement
+    # as a forecast.
     peak = _number(forecast_df["predicted_pm25"].max())
     peak_value = f"<strong>{peak:.1f} µg/m³</strong>" if peak is not None else "n/a"
     generated = generated_at.strftime("%Y-%m-%d %H:%M %Z")
@@ -627,6 +569,7 @@ def _render_page(
     metrics_table = _metrics_table(metadata)
     verdict = _verdict(metadata)
     skill_line = _skill_line(metadata)
+    horizon_section = _horizon_section(metadata)
     backtest_section = _backtest_section(metadata)
     regime_section = _regime_section(metadata)
     glossary = _glossary(metadata)
@@ -696,7 +639,7 @@ def _render_page(
 <div class="card">
   <p>Current air-quality index: <span class="badge">{category}</span></p>
   <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
-  <p>Forecast peak: {peak_value}
+  <p>Highest hour ahead: {peak_value}
      (WHO 24-hour guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
 </div>
 
@@ -709,6 +652,7 @@ def _render_page(
   {verdict}
 {metrics_table}
   {skill_line}
+{horizon_section}
 {backtest_section}
 {regime_section}
 {glossary}

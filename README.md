@@ -55,15 +55,58 @@ On that window gradient boosting lowers MAE by ~25% versus the naive persistence
 **Year-round the figure is 19.1%** — 6.97 against the naive rule's 8.61 µg/m³, both scored
 on the same rolling folds. The published page leads with the 19.1%: the split's 25% is a
 summer number, and quoting it beside an all-seasons error credits the model with a season
-it was not tested across.
+it was not tested across. The gap holds **fold by fold, 5 of 5** (mean +1.64 µg/m³), which
+is what makes it a result rather than an average that one hard winter fold could be
+carrying.
 
 **The pipeline picks the model itself**, and it picks on rolling-origin cross-validation,
 never on the split above — choosing a winner on the rows the report then publishes would
 turn those figures into a best-of-three rather than an honest estimate. CV MAE across the
-year: HistGradientBoosting **6.97**, RandomForest 7.18, Ridge 8.19. Gradient boosting wins,
-but by less than the ±2.5 swing between folds, so the honest summary is "these two are
-close" — and because the pipeline retrains daily on a rolling year, the winner can change.
-The published report always names the model it actually used.
+year: HistGradientBoosting **6.97**, RandomForest 7.18, Ridge 8.19.
+
+How close is that? The question is settled by the **per-fold difference**, not by comparing
+the gap to the ±2.5 swing between folds — that swing is seasonal and common to every
+candidate, so testing against it would call the model's own 1.64 win over the naive rule a
+null too. Paired: gradient boosting beats RandomForest on 4 folds of 5 (+0.21, losing the first) and
+Ridge on 4 of 5 with the second fold a **tie** — those two land 0.003 µg/m³ apart there, below the
+precision this page even prints, and counting that as a fold won would be the same overclaim
+one level down. So the honest summary is still "the top two are close", but for the right
+reason: the winner changes hands on one fold in five, and because the pipeline retrains
+daily on a rolling year it can change on the next run. The published report always names the
+model it actually used.
+
+**One error figure was describing twenty-four different tasks.** The model is trained on a
+single task — predict 24 hours ahead — and the lead time is not one of its inputs. It cannot
+be: every feature is anchored at the hour being predicted, so the rows for "+1h" and "+24h"
+at the same valid time are the *same row*. The model's error is therefore not approximately
+flat across the published chart, it is exactly constant. The naive reference is not:
+
+| Lead | Model MAE | Naive MAE | Paired Δ | Folds won | Served by |
+|------|:---------:|:---------:|:--------:|:---------:|:---------:|
+| +1 h  | 6.97 | **3.75** | −3.22 | 0/5 | naive rule |
+| +3 h  | 6.97 | **5.51** | −1.46 | 1/5 | naive rule |
+| +6 h  | 6.97 | 7.20 | +0.23 | 2/5 | naive rule |
+| +12 h | **6.97** | 8.51 | +1.54 | 4/5 | model |
+| +24 h | **6.97** | 8.61 | +1.64 | 5/5 | model |
+
+*(Naive rule = "the reading at the moment the forecast is issued". At a 24-hour lead that is
+the same prediction as "the same hour yesterday", which is why one baseline sufficed until
+the lead axis was measured.)*
+
+**Over the first six hours the forecast was not worth serving**, so those hours now carry the
+naive rule and the page says so. The reason is not uniform across that range, and the
+distinction is the point. Through +5 h the naive rule simply wins — 3.75 against 6.97 at one
+hour ahead, which is the model losing to "nothing changes" by 86%. At +6 h it flips: the
+model is ahead *on average* (+0.23) while losing three folds of five. **A mean that holds in
+two periods out of five does not earn the hour**, so the boundary sits above it rather than
+below, and the published sentence is derived from that record instead of asserting a blanket
+"the model is worse" the table would contradict.
+
+Two things this measurement corrected on the way. The naive curve is **not** monotone in the
+lead — it peaks at +18 h (8.93) and falls back to 8.57 by +23 h, because "the reading now"
+re-aligns with the same hour of day as the lead approaches 24. And the served range is kept
+contiguous by construction, not because the curve is smooth: 24 independent per-lead choices
+would be a best-of-N on the same folds that produce the published figures.
 
 **Rolling-origin cross-validation** also gives a far more sober picture than any single
 split: **~7 µg/m³** against the split's 3.6, because winter folds are much harder than a

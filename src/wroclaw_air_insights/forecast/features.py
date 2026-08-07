@@ -129,6 +129,42 @@ def build_inference_features(
     return future_rows.reset_index(drop=True)
 
 
+def observations_at_origin(
+    pm25: pd.DataFrame, timestamps: pd.Series, leads: Iterable[int]
+) -> pd.DataFrame:
+    """PM2.5 as it stood ``lead`` hours before each valid time, one column per lead.
+
+    This is the reading a forecaster physically holds at the moment of issue: for valid
+    time ``T`` and lead ``l`` the origin is ``T - l``, so the observation is ``pm25[T - l]``.
+    Strictly in the past relative to ``T`` for every positive lead, so it leaks nothing.
+
+    Note what falls out at ``l = 24``: ``pm25[T - 24]`` is exactly ``pm25_lag_24``, which is
+    what :func:`baseline.persistence_prediction` already returns. The two naive rules —
+    "the reading now" and "the same hour yesterday" — are the same rule at a 24h lead and
+    different rules everywhere else, which is precisely why one number could not describe
+    the whole chart.
+
+    Rows whose origin observation is missing come back as ``NaN``; the caller must exclude
+    them from *both* predictors, or the comparison stops being paired.
+    """
+    series = (
+        pm25[["timestamp", "value"]]
+        .sort_values("timestamp")
+        .drop_duplicates("timestamp", keep="last")
+        .set_index("timestamp")["value"]
+    )
+    if not series.empty:
+        # Shifts must be by TIME, not by surviving-row position — the same reindex
+        # `_assemble` performs, for the same reason.
+        series = series.reindex(
+            pd.date_range(series.index.min(), series.index.max(), freq="h")
+        )
+    stamps = pd.to_datetime(pd.Series(timestamps).reset_index(drop=True))
+    return pd.DataFrame(
+        {int(lead): series.shift(int(lead)).reindex(stamps).to_numpy() for lead in leads}
+    )
+
+
 def feature_columns(features: pd.DataFrame) -> list[str]:
     """Model feature names (everything except the timestamp and the target)."""
     return [c for c in features.columns if c not in (TARGET_COLUMN, "timestamp")]

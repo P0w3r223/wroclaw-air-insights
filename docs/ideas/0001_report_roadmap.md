@@ -357,6 +357,111 @@ therefore not obviously the right one — see the entry itself.
    selection over {naive, per-lead model, pooled model}, which the existing `select_model`
    machinery already expresses, one lead at a time.
 
+   ### Phase 0 — shipped, and the free half of the lever collected
+
+   An architecture pass on the pilot disagreed with this item in three places, and the
+   disagreements reshaped what got built.
+
+   **The headline number priced the wrong quantity.** 2.8 µg/m³ is the span between the
+   model's easiest task (lead 1) and its hardest (lead 24) — a measure of *task difficulty*,
+   not of achievable improvement, and not comparable to a feature delta measured on a fixed
+   task. The comparable quantity is today's constant error minus the best available
+   predictor at each lead, averaged over the 24 hours the page publishes: **≈0.70 µg/m³**.
+   Still ~8× the largest feature delta, still the biggest lever here, and a third of what
+   this item claimed.
+
+   **That 0.70 splits in two, and one half is nearly free.** ≈0.30 comes from serving the
+   naive rule where it already wins — no new estimator, no per-lead fitting; ≈0.40 needs the
+   per-lead specialists. Phase 0 is the first half.
+
+   *"Nearly", not "zero", and the difference was worth catching.* Scoring the lead axis
+   needs the winner's held-out predictions, and `select_model` discards the ones it already
+   computed — so `horizon.measure` refits the winner once per fold: ~15 → ~20 fits per daily
+   run, a handful of seconds of gradient boosting on a job that takes ~9 minutes. Accepted
+   rather than plumbed around, because having `select_model` hand back per-fold prediction
+   arrays would put non-serialisable numpy into the object that becomes bundle metadata.
+
+   **The blast radius was overstated.** The leakage rule is that `pm25_lag_k` is legal for
+   row `(O, l)` iff `k ≥ l`. With leads 1–24 and lags (24, 48, 168), *every existing lag is
+   already legal at every lead* — nothing has to change coordinate systems, and Phase 0 needs
+   no change to the training matrix at all.
+
+   **The sharpest fact came out of the code rather than the measurements.** Every feature is
+   anchored at the valid time `T`; the lead is not an input and cannot be, so the rows for
+   lead 1 and lead 24 at the same `T` are the *identical row*. The model's per-lead error is
+   therefore not approximately flat — it is **exactly** constant. Confirmed empirically: 6.966
+   / 6.967 across all 24 leads, varying only where a missing origin observation changes which
+   rows are scored.
+
+   Measured on the project's own folds, model and naive rule on identical rows:
+
+   | Lead | Model | Naive (reading at issue) | Paired Δ | Folds won | Served by |
+   |------|:-----:|:------------------------:|:--------:|:---------:|:---------:|
+   | 1 h  | 6.97 | **3.75** | −3.22 | 0/5 | naive |
+   | 3 h  | 6.97 | **5.51** | −1.45 | 1/5 | naive |
+   | 5 h  | 6.97 | **6.73** | −0.24 | 2/5 | naive |
+   | 6 h  | 6.97 | 7.20 | +0.23 | 2/5 | naive |
+   | 7 h  | 6.97 | 7.54 | +0.57 | 3/5 | model |
+   | 12 h | 6.97 | 8.51 | +1.54 | 4/5 | model |
+   | 24 h | 6.97 | 8.61 | +1.64 | 5/5 | model |
+
+   **The crossover is lead 6: a quarter of the published chart was worse than doing nothing.**
+   Those hours now serve the current reading, labelled as such on the page and in the chart.
+
+   Lead 6 is the entry worth keeping: the model is ahead *on average* (+0.23) and loses three
+   folds of five. Under the rule this document used to apply — compare the delta to the ±2.55
+   fold spread — that is a null on a technicality. Under the paired rule it is a decision:
+   a mean that holds in two weeks out of five does not earn the slot.
+
+   **A review caught the page stating the blunt version of that.** The served-hours sentence
+   was templated off the crossover alone and read "over that range the model is measurably
+   worse than doing nothing" — directly contradicting the `+0.23` printed two rows above it,
+   and wrong on exactly the case the design exists to handle. The sentence now derives from
+   the boundary record: outright loss and mean-win/fold-loss get different prose. Two more
+   from the same review, both the same shape — a claim the page's own numbers refute:
+   `_selection_note` was still arguing from the ±fold spread this change declares refuted,
+   a few hundred bytes from the corrected argument; and "this page used to print a single
+   error figure for all 24 hours" was past tense about something the page still does.
+
+   **The prefix rule is not justified by monotonicity, and the curve proves it.** The
+   docstring claimed the naive error grows with the lead so a single crossover is monotone by
+   construction. Measured: naive MAE peaks at lead 18 (8.93) and falls back to 8.57 by lead
+   23, because "the reading now" re-aligns with the same hour of day as the lead approaches
+   24 — and the fold tallies wobble too (leads 10/11/12 give 4/5/4). The rule stands on its
+   second reason alone, which was always the real one: 24 independent argmins would be a
+   best-of-N on the folds that also produce the published figures, and the served range has
+   to be contiguous for the page to describe itself in a sentence.
+
+   **A fold "win" now needs to be visible.** `paired_delta` counted any positive difference as
+   a fold won, and the selection path pairs on fold MAEs already rounded to three decimals —
+   so gradient boosting was credited with beating Ridge 5 folds of 5, one of which separates
+   them by **0.003 µg/m³**, below the precision the page prints. Ties are now their own
+   category, anchored on that published precision, and the tally carries the narrowest fold
+   beside it. The corrected claim is 4 of 5 with one tied.
+
+   **The methodology rule was wrong and is now fixed** (`CLAUDE.md`). "A delta inside the fold
+   spread is a null" tests against the spread of MAE *levels*, which is seasonal and common to
+   every predictor on those folds — by that test this project's own headline is a null
+   (8.61 − 6.97 = 1.64, inside ±2.55). The correct statistic is the mean and spread of the
+   per-fold *difference*. Two consequences landed immediately: the headline claim is now
+   *measured in code* rather than assumed — `train` stores `cv_paired_vs_baseline`, and the
+   model beats the naive rule on 5 folds of 5, closest margin 0.20 — and the model-selection
+   prose was corrected. HistGradientBoosting beats RandomForest 4/5 and Ridge 4/5 with one
+   tie, so "the top two are close" was the right conclusion from the wrong reason. The two
+   published nulls were judged under the old reading and have not been re-measured paired;
+   they stand as unrefuted, not as confirmed.
+
+   Shipped: `config.FORECAST_LEADS` / `CV_SPLITS`, `features.observations_at_origin`,
+   `model.paired_delta` / `fold_indices` / `cross_validate_predictions` (one set of fits
+   serves all 24 leads — refitting per lead would produce 24 identical estimators),
+   `forecast/horizon.py` (scoring, prefix crossover, `apply_policy`), bundle **schema 2**
+   carrying the serving policy with a named error on older bundles, `serving` returning
+   `lead` and `source`, and the report's MAE-vs-lead chart plus its section. Suite 211 → 262.
+
+   Phase 1 — the per-lead specialists worth the other ≈0.40 — is **gated**: the paired delta
+   of specialist against `max(today's model, naive)` must be positive on ≥4 folds of 5 across
+   a majority of leads, or the null gets published and Phase 0 stands alone.
+
    **Cost, with the RandomForest question settled by the same numbers.** Per-lead selection is
    3 candidates × 5 folds × 24 leads = 360 fits. At ~8.5k rows each that is ~2 min without
    RandomForest and ~8 min with it, on top of a daily job that runs ~9 min today — for a
