@@ -29,6 +29,9 @@ reports/site/
 .vscode/
 *.iml
 
+# Local assistant session notes and settings — machine-local, not project history
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -19,8 +19,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -33,7 +33,10 @@ jobs:
           python -m wroclaw_air_insights.pipeline ingest --days 365
           python -m wroclaw_air_insights.pipeline train
           python -m wroclaw_air_insights.report
-      - uses: actions/upload-pages-artifact@v3
+      # v4 stopped including dotfiles in the artifact. Checked before bumping: the built site
+      # is a single self-contained index.html and nothing writes a .nojekyll, so nothing is
+      # dropped. A site that later needs one must set `include-hidden-files` (added in v5).
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: reports/site
 
@@ -45,4 +48,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
