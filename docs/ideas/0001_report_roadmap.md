@@ -405,6 +405,13 @@ therefore not obviously the right one — see the entry itself.
     - The clock is an argument, so the page is deterministic under test. Passing a fixed
       instant is what makes the footer assertion possible at all.
 
+    And one real defect the seam exposed: **the forecast peak had no NaN gate**. Every stored
+    metric passes through `_number`, but the peak comes from the frame rather than from the
+    metadata, so an empty or all-NaN `predicted_pm25` published `Forecast peak: nan µg/m³` —
+    the largest number on the page. Not reachable today, because `predict_next_24h` raises
+    instead of returning an empty frame; reachable as soon as item 5 adds callers to this seam.
+    Now gated the same way as everything else.
+
     Watch, for anything asserting on the whole page: the charts are inlined as base64, and a
     payload contains arbitrary letter runs — a bare `"nan" not in html` fails on PNG bytes,
     not on prose. The page-level tests strip `data:image/png;base64,…` first.
