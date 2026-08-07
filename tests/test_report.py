@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from wroclaw_air_insights import charts, config, report
+from wroclaw_air_insights import charts, config, regime_section, report
 from wroclaw_air_insights.forecast import baseline, features, model
 
 _NAN = float("nan")
@@ -368,7 +368,7 @@ _WITH_REGIME = {
 
 
 def test_regime_section_shows_both_sides_of_the_guideline_with_their_hour_counts():
-    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    html = regime_section.render(_fresh_metadata(**_WITH_REGIME))
     assert "Below 15 µg/m³" in html
     assert "At or above 15 µg/m³" in html
     assert "1,280 hours" in html
@@ -377,19 +377,19 @@ def test_regime_section_shows_both_sides_of_the_guideline_with_their_hour_counts
 
 def test_regime_section_keeps_the_sign_so_the_two_directions_stay_visible():
     """The whole point: high on clean hours, low on polluted ones. Unsigned it vanishes."""
-    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    html = regime_section.render(_fresh_metadata(**_WITH_REGIME))
     assert "+2.15" in html
     assert "-2.73" in html
 
 
 def test_regime_section_puts_the_naive_rule_in_the_same_table():
-    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    html = regime_section.render(_fresh_metadata(**_WITH_REGIME))
     assert "+1.70" in html and "-4.95" in html
     assert "Naive MAE" in html
 
 
 def test_regime_section_states_detection_against_the_naive_rule():
-    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    html = regime_section.render(_fresh_metadata(**_WITH_REGIME))
     assert "flagged <strong>57%</strong>" in html
     assert "the naive rule: 40%" in html  # 0.405 -> banker's rounding at the half
     assert "<strong>42%</strong> of the hours it flagged turned out to be below" in html
@@ -398,7 +398,7 @@ def test_regime_section_states_detection_against_the_naive_rule():
 def test_regime_section_says_the_threshold_is_a_reference_not_a_compliance_test():
     # Applying a 24h guideline to hourly readings is exactly the category error this
     # roadmap item was written to avoid repeating.
-    html = report._regime_section(_fresh_metadata(**_WITH_REGIME))
+    html = regime_section.render(_fresh_metadata(**_WITH_REGIME))
     assert "not as a compliance test" in html
 
 
@@ -407,7 +407,7 @@ def test_regime_section_honours_a_stored_threshold_of_zero():
     # level while the numbers underneath were split somewhere else entirely.
     zeroed = _regime()
     zeroed["threshold"] = 0.0
-    html = report._regime_section(_fresh_metadata(regime=zeroed))
+    html = regime_section.render(_fresh_metadata(regime=zeroed))
     assert "Below 0 µg/m³" in html
     assert "15 µg/m³" not in html
 
@@ -417,7 +417,7 @@ def test_regime_section_drops_the_detection_line_when_no_hour_was_elevated():
     calm["elevated"] = {"n": 0, "mae": None, "bias": None}
     calm["detection"] = {"hits": 0, "misses": 0, "false_alarms": 0,
                          "hit_rate": None, "false_alarm_ratio": None}
-    html = report._regime_section(_fresh_metadata(regime=calm))
+    html = regime_section.render(_fresh_metadata(regime=calm))
     assert "flagged" not in html
     assert "Below 15 µg/m³" in html
     assert "n/a" in html  # the elevated row still renders, without numbers
@@ -425,7 +425,7 @@ def test_regime_section_drops_the_detection_line_when_no_hour_was_elevated():
 
 
 def test_regime_section_omits_the_naive_columns_a_bundle_never_stored():
-    html = report._regime_section(_fresh_metadata(regime=_regime()))
+    html = regime_section.render(_fresh_metadata(regime=_regime()))
     assert "Below 15 µg/m³" in html
     assert "the naive rule:" not in html
     assert "None" not in html
@@ -436,7 +436,7 @@ def test_regime_section_omits_the_naive_columns_a_bundle_never_stored():
     ids=["empty", "legacy_bundle", "no_hours"],
 )
 def test_regime_section_renders_nothing_without_a_breakdown(metadata):
-    assert report._regime_section(metadata) == ""
+    assert regime_section.render(metadata) == ""
 
 
 # --- _backtest_section --------------------------------------------------------
@@ -803,7 +803,7 @@ def test_horizon_section_renders_nothing_without_a_curve_to_draw(metadata):
 @pytest.mark.parametrize(
     "builder",
     [report._metrics_table, report._verdict, report._skill_line,
-     report._regime_section, report._backtest_section, report._horizon_section,
+     regime_section.render, report._backtest_section, report._horizon_section,
      report._rejected_section, report._glossary],
     ids=["metrics_table", "verdict", "skill_line", "regime_section",
          "backtest_section", "horizon_section", "rejected_section", "glossary"],

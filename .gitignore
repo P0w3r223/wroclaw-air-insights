@@ -24,6 +24,12 @@ models/
 # Generated Pages report (built by report.py / GitHub Actions)
 reports/site/
 
+# The prospective forecast log. It lives on its own append-only data branch, checked out into
+# .forecast-log/ by the refresh workflow — never committed to main, where a daily append would
+# bury the code history. A local `report --log` writes here too.
+.forecast-log/
+forecasts.jsonl
+
 # IDE / editor
 .idea/
 .vscode/
