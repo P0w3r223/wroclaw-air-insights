@@ -18,11 +18,10 @@ import json
 import sys
 
 from wroclaw_air_insights import clean, config, db
-from wroclaw_air_insights.forecast import features, model, serving
+from wroclaw_air_insights.forecast import features, horizon, model, serving
 from wroclaw_air_insights.ingest import gios, weather
 
 _MAX_ARCHIVAL_DAYS = 366
-_CV_SPLITS = 5
 # Fallback when no bundle has been trained yet and nothing records what is deployed.
 _DEFAULT_MODEL = "HistGradientBoosting"
 
@@ -78,6 +77,19 @@ def _loggable(results: dict) -> dict:
     return {**results, "backtest": f"<{len(backtest.get('timestamps', []))} hours>"}
 
 
+def _lead_summary(policy: dict) -> dict:
+    """The lead table reduced to one line per lead — the fold arrays belong in the bundle."""
+    return {
+        str(lead): (
+            f"model {record['model_mae']} vs naive {record['naive_mae']} µg/m³, "
+            f"paired {record['delta']['mean']:+} on "
+            f"{record['delta']['model_wins']}/{record['delta']['n_folds']} folds "
+            f"-> {policy['leads'].get(lead, '?')}"
+        )
+        for lead, record in sorted(policy["scored"].items())
+    }
+
+
 def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Read stored data, build features, train, and evaluate vs baseline."""
     conn = db.connect()
@@ -92,7 +104,7 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
           f"{len(features.feature_columns(feature_frame))} features")
     # Let the comparison decide, on rolling CV rather than on the split we then report:
     # picking a winner on the held-out rows would make its metrics a best-of-N.
-    selection = model.select_model(feature_frame, n_splits=_CV_SPLITS)
+    selection = model.select_model(feature_frame, n_splits=config.CV_SPLITS)
     winner = selection["winner"]
     print(f"[train] model selection ({selection['selected_on']}) -> {winner}")
     print(json.dumps(selection["cv_by_model"], indent=2))
@@ -101,10 +113,28 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     # prints describes the same year the headline error describes. Measured on the single
     # summer split alone the same model looks ~6 points better than it is.
     cv_model = selection["cv_by_model"][winner]
-    cv_baseline = model.cross_validate_baseline(feature_frame, n_splits=_CV_SPLITS)
+    cv_baseline = model.cross_validate_baseline(feature_frame, n_splits=config.CV_SPLITS)
     cv_improvement = model.improvement_pct(cv_model["mae_mean"], cv_baseline["mae_mean"])
+    # The headline has to carry the paired statistic the methodology rule now names, and
+    # carry it from code: quoting a hand-computed fold tally in the README would go stale
+    # on the next daily retrain without anything noticing.
+    cv_paired = model.paired_delta(cv_baseline["fold_mae"], cv_model["fold_mae"])
     print(f"[train] year-round: model {cv_model['mae_mean']} vs naive "
-          f"{cv_baseline['mae_mean']} µg/m³ -> {cv_improvement}% better")
+          f"{cv_baseline['mae_mean']} µg/m³ -> {cv_improvement}% better "
+          f"({cv_paired['mean']:+} paired, won on {cv_paired['model_wins']}/"
+          f"{cv_paired['n_folds']} folds, closest {cv_paired['smallest_margin']})")
+
+    # The lead axis. One MAE has been describing 24 different tasks: the model cannot see
+    # the lead, so its error is constant across the published chart while the naive rule's
+    # grows with it. Measuring both on the same folds says where — if anywhere — the
+    # forecast is beaten by simply repeating the current reading.
+    policy = horizon.measure(feature_frame, pm25, winner, n_splits=config.CV_SPLITS)
+    crossover = policy["crossover_lead"]
+    print(f"[train] lead axis: naive rule serves leads 1-{crossover}, model serves "
+          f"{crossover + 1}-{config.FORECAST_LEADS[-1]}"
+          if crossover
+          else "[train] lead axis: the model beats the naive rule at every lead")
+    print(json.dumps(_lead_summary(policy), indent=2))
 
     results, _ = model.run_experiment(feature_frame, model_name=winner)
     print("[train] results:")
@@ -123,10 +153,13 @@ def train(station_id: int = config.PRIMARY_STATION_ID) -> dict:
             "cross_validation": cv_model,
             "cross_validation_baseline": cv_baseline,
             "mae_improvement_pct_cv": cv_improvement,
+            "cv_paired_vs_baseline": cv_paired,
             "selection": selection,
+            "horizon": policy,
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
         },
+        policy=policy,
     )
     print(f"[train] saved model -> {path}")
     return results
@@ -149,8 +182,8 @@ def compare(station_id: int = config.PRIMARY_STATION_ID) -> dict:
 
     # Every candidate, not one hardcoded name: this command exists to compare, and it used
     # to cross-validate RandomForest while `train` deployed whatever selection picked.
-    selection = model.select_model(feature_frame, n_splits=_CV_SPLITS)
-    baseline_cv = model.cross_validate_baseline(feature_frame, n_splits=_CV_SPLITS)
+    selection = model.select_model(feature_frame, n_splits=config.CV_SPLITS)
+    baseline_cv = model.cross_validate_baseline(feature_frame, n_splits=config.CV_SPLITS)
     print(f"[compare] rolling cross-validation (winner: {selection['winner']}), "
           f"naive rule on the same folds at {baseline_cv['mae_mean']} µg/m³:")
     print(json.dumps(selection["cv_by_model"], indent=2))
@@ -166,7 +199,7 @@ def _deployed_model_name() -> str:
     """Name of the model the saved bundle actually holds, so importances match what runs."""
     try:
         return model.load_model()["metadata"].get("model_name") or _DEFAULT_MODEL
-    except FileNotFoundError:
+    except (FileNotFoundError, model.BundleSchemaError):
         return _DEFAULT_MODEL
 
 
@@ -216,6 +249,12 @@ def predict(station_id: int = config.PRIMARY_STATION_ID) -> dict:
         model.load_model()
     except FileNotFoundError:
         print("[predict] no saved model — training first ...")
+        train(station_id)
+    except model.BundleSchemaError:
+        # The schema break is meant to heal in one run, and this is the command a local
+        # user reaches for first — a traceback here would make a deliberate migration look
+        # like a bug.
+        print("[predict] saved model predates the per-lead policy — retraining ...")
         train(station_id)
 
     forecast_df = serving.predict_next_24h(station_id)

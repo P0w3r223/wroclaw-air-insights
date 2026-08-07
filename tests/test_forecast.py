@@ -7,6 +7,7 @@ into the past, which is the methodological point of the whole project.
 from pathlib import Path
 from unittest.mock import patch
 
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
@@ -525,10 +526,72 @@ def test_save_load_model_roundtrip(tmp_path):
     x, y = features.split_xy(frame)
     trained = model.train_forecaster(x, y)
 
-    path = model.save_model(trained, list(x.columns), metadata={"k": 1}, models_dir=tmp_path)
+    path = model.save_model(
+        trained, list(x.columns), metadata={"k": 1}, models_dir=tmp_path,
+        policy={"crossover_lead": 4},
+    )
     assert path.exists()
 
     bundle = model.load_model(models_dir=tmp_path)
+    assert bundle["schema"] == model.BUNDLE_SCHEMA
     assert bundle["feature_names"] == list(x.columns)
     assert bundle["metadata"]["k"] == 1
+    assert bundle["policy"]["crossover_lead"] == 4
     assert np.allclose(bundle["model"].predict(x.head(3)), trained.predict(x.head(3)))
+
+
+def test_load_model_refuses_a_bundle_written_before_the_serving_policy(tmp_path):
+    # A clean break on purpose. The per-lead policy is measured during training and cannot
+    # be reconstructed from a saved estimator, so a compatibility path would have to invent
+    # one — and the page would then publish a lead breakdown nothing measured.
+    joblib.dump(
+        {"model": object(), "feature_names": ["a"], "metadata": {}},
+        tmp_path / model.MODEL_FILENAME,
+    )
+    with pytest.raises(model.BundleSchemaError, match="pipeline train"):
+        model.load_model(models_dir=tmp_path)
+
+
+def test_cross_validate_baseline_names_a_rule_the_registry_does_not_hold():
+    pm25, weather = _make_data(300)
+    frame = features.build_features(pm25, weather)
+    with pytest.raises(model.UnknownBaselineError, match="baseline_persistence"):
+        model.cross_validate_baseline(frame, "baseline_vibes", n_splits=3)
+
+
+def test_cross_validate_and_its_predictions_describe_the_same_folds():
+    # cross_validate is now a summary of cross_validate_predictions; if the two ever drift
+    # apart, the per-lead table and the headline CV figure stop describing the same fits.
+    pm25, weather = _make_data(400)
+    frame = features.build_features(pm25, weather)
+    summary = model.cross_validate(frame, "Ridge", n_splits=3)
+    folds = model.cross_validate_predictions(frame, "Ridge", n_splits=3)
+
+    per_fold = [
+        round(float(np.mean(np.abs(fold["y_pred"] - fold["y_true"]))), 3) for fold in folds
+    ]
+    assert summary["fold_mae"] == per_fold
+
+
+def test_fold_indices_match_the_rows_the_baseline_is_scored_on():
+    folds = model.fold_indices(100, n_splits=3)
+    assert len(folds) == 3
+    # Rolling origin: every fold's test rows come strictly after the previous fold's.
+    for earlier, later in zip(folds, folds[1:]):
+        assert earlier.max() < later.min()
+
+
+def test_the_two_fold_producers_agree_on_the_same_rows():
+    # fold_indices scores the baselines, cross_validate_predictions scores the model, and
+    # they build their splitters separately. If they ever disagree, every model-vs-naive
+    # comparison on this project silently stops being paired.
+    pm25, weather = _make_data(400)
+    frame = features.build_features(pm25, weather)
+    from_predictions = [
+        fold["test_index"] for fold in model.cross_validate_predictions(frame, "Ridge", 3)
+    ]
+    from_indices = model.fold_indices(len(frame), n_splits=3)
+
+    assert len(from_predictions) == len(from_indices)
+    for predicted, expected in zip(from_predictions, from_indices):
+        assert np.array_equal(predicted, expected)
