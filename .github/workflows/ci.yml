@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# A superseded run has nothing to say about the commit that replaced it. Without this,
+# pushing a fix leaves the old run holding a queue slot -- and a run stuck in `queued`
+# means the newest commit never gets checked at all.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
