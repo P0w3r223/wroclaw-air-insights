@@ -7,7 +7,7 @@ can be published to Pages with no external assets.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -40,6 +40,69 @@ _AQI_COLORS = {
     "Brak indeksu": _NEUTRAL_BADGE,
 }
 _DEFAULT_REPORT_PATH = config.PROJECT_ROOT / "reports" / "site" / "index.html"
+
+
+def _forecast_origin(forecast_df: pd.DataFrame, generated_at: datetime):
+    """The hour the forecast was anchored on, as an aware datetime — or ``None``.
+
+    Derived rather than plumbed through: every row carries the hour it predicts and how many
+    hours ahead of the origin that is, so the origin is recoverable from the frame the page
+    already holds. A frame without a ``lead`` column predates the per-lead policy and yields
+    nothing, which is why this returns ``None`` instead of guessing at row order.
+
+    Stored timestamps are tz-naive and ``generated_at`` is aware, so subtracting them raises.
+    Naive stamps are read as ``config.TIMEZONE`` — the project runs on one clock, and this is
+    the seam where that assumption becomes load bearing rather than merely true.
+    """
+    if forecast_df.empty or "lead" not in forecast_df.columns:
+        return None
+    stamps = pd.to_datetime(forecast_df["timestamp"], errors="coerce")
+    leads = pd.to_numeric(forecast_df["lead"], errors="coerce")
+    usable = stamps.notna() & leads.notna()
+    if not usable.any():
+        return None
+
+    first = usable.idxmax()
+    # stdlib timedelta, not pd.Timedelta(hours=...): under pandas 2.3 / numpy 2.5 the keyword
+    # form is deprecated and slated to raise. Three older call sites still use it — see the
+    # note in this commit's message.
+    origin = stamps[first] - timedelta(hours=int(leads[first]))
+    if origin.tzinfo is None:
+        origin = origin.tz_localize(generated_at.tzinfo)
+    return origin.tz_convert(generated_at.tzinfo)
+
+
+def _freshness_note(forecast_df: pd.DataFrame, generated_at: datetime) -> str:
+    """How old the reading this forecast is anchored on actually is.
+
+    The early leads are the current reading republished, so the page calls it exactly that.
+    When a station stops reporting, nothing else on the page changes — the model still fits,
+    the chart still draws, and the wording still says "current". This is the one line that
+    would not.
+
+    Deliberately not a build failure. A daily job that refuses to publish on a station outage
+    replaces a stale-but-labelled page with no page at all, which is worse for a reader and
+    hides the outage rather than reporting it.
+    """
+    origin = _forecast_origin(forecast_df, generated_at)
+    if origin is None:
+        return ""
+    age = (generated_at - origin).total_seconds() / 3600
+    if age < 0:
+        return ""
+
+    when = origin.strftime("%Y-%m-%d %H:%M %Z")
+    if age < config.STALE_ORIGIN_HOURS:
+        return (
+            f"""<p class="hint">Anchored on the {when} reading, {age:.0f} h before this page
+  was built.</p>"""
+        )
+    return (
+        f"""<p class="hint"><strong>The most recent reading available was {when}</strong> —
+  {age:.0f} hours before this page was built, so the earliest hours below repeat a
+  measurement that is no longer current. The station reports hourly; a gap this size means
+  it stopped.</p>"""
+    )
 
 
 def _backtest_section(metadata: dict) -> str:
@@ -566,6 +629,7 @@ def _render_page(
     peak = _number(forecast_df["predicted_pm25"].max())
     peak_value = f"<strong>{peak:.1f} µg/m³</strong>" if peak is not None else "n/a"
     generated = generated_at.strftime("%Y-%m-%d %H:%M %Z")
+    freshness = _freshness_note(forecast_df, generated_at)
 
     metrics_table = _metrics_table(metadata)
     verdict = _verdict(metadata)
@@ -649,6 +713,7 @@ def _render_page(
   <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
   <p>Highest hour ahead: {peak_value}
      (WHO 24-hour guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
+  {freshness}
 </div>
 
 <div class="card">
