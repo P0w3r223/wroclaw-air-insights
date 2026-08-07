@@ -18,8 +18,8 @@ comparison rather than two numbers that happen to sit in the same table:
   the page uses, over the shared rows;
 * **a verdict per candidate estimator**, because a feature can help one model family and hurt
   another. That is not hypothetical here: Ridge is the only candidate either wind re-encoding
-  moves consistently, it moves helpfully under sine/cosine and not at all under u/v, and the
-  deployed model is slightly worse under both.
+  moves consistently, and only under sine/cosine — under u/v it moves further and not
+  consistently — while the deployed model is slightly worse under both.
 """
 
 from __future__ import annotations
@@ -68,22 +68,33 @@ def verdict(delta: dict) -> str:
     return NULL
 
 
-def expected_by_chance(n_comparisons: int, n_folds: int) -> float:
+def expected_by_chance(n_comparisons: int, n_folds: int, tie_rate: float = 0.0) -> float:
     """How many sign-consistent verdicts this many comparisons produce from noise alone.
 
-    The verdict rule asks that no fold contradict the direction. Under a change that does
-    nothing, each fold's sign is a coin flip, so a clean sweep happens with probability
-    ``2 / 2**n_folds`` — **one comparison in sixteen at five folds**. That is not a small
-    number when a run scores three estimators against two variants apiece, and the harness
-    reports it rather than leaving the reader to work out that twelve comparisons are
-    expected to manufacture roughly one improvement out of nothing.
+    The verdict rule asks that no fold *contradict* the direction. Under a change that does
+    nothing and never ties, each fold's sign is a coin flip and a clean sweep happens with
+    probability ``2 / 2**n_folds`` — one comparison in sixteen at five folds.
 
-    Ties make the real figure a little lower, since a tied fold neither sweeps nor breaks a
-    sweep. The bound is the useful direction to be wrong in.
+    **Ties raise that, they do not lower it**, and the first version of this function said the
+    opposite. A tie is not a contradiction, so a tied fold cannot break a sweep: it removes a
+    chance to fail. With per-fold tie probability ``t`` the rate is
+
+        ``2 * (((1 + t) / 2) ** n_folds - t ** n_folds)``
+
+    which exceeds ``2 / 2**n_folds`` for every ``t > 0``. On this project's own run — 8 tied
+    folds out of 60 — that is 0.12 per comparison rather than 0.06, so twelve comparisons
+    expect **1.4** sweeps from noise and not the 0.75 the naive figure gives. Getting the
+    direction wrong was not academic: it made two survivors look like more than noise
+    produces, when they are about exactly what it produces.
+
+    Still a floor rather than a bound. Rolling-origin folds share training rows, so their
+    per-fold signs are positively correlated, which raises the sweep rate further; this
+    assumes independence because the correlation is not estimated anywhere here.
     """
     if n_folds <= 0:
         return 0.0
-    return round(n_comparisons * 2 / (2 ** n_folds), 2)
+    sweep = 2 * (((1 + tie_rate) / 2) ** n_folds - tie_rate ** n_folds)
+    return round(n_comparisons * sweep, 2)
 
 
 def align_variants(variants: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
@@ -102,7 +113,14 @@ def align_variants(variants: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]
         stamps = set(pd.to_datetime(frame["timestamp"]))
         shared = stamps if shared is None else (shared & stamps)
 
-    keep = pd.Series(sorted(shared or set()))
+    if not shared:
+        raise ValueError(
+            "the variants share no hours at all, so there is nothing to compare them on: "
+            + ", ".join(f"{name} has {len(frame)} rows" for name, frame in variants.items())
+            + ". A variant whose extra column is missing everywhere produces this."
+        )
+
+    keep = pd.Series(sorted(shared))
     return {
         name: (
             frame[pd.to_datetime(frame["timestamp"]).isin(set(keep))]
@@ -173,17 +191,30 @@ def compare_variants(
             },
         }
 
-    n_comparisons = len(names) * (len(aligned) - 1)
+    # Carried beside the verdicts on purpose. Reading only the rows that came out
+    # "improvement" out of a grid this size is the same selection error the project avoids
+    # elsewhere by not choosing a winner on the rows it then publishes.
+    #
+    # The tie count travels with it because the sweep rate depends on it, and steeply: ties
+    # are folds that cannot contradict, so a run that ties often manufactures sweeps faster.
+    # Measured here rather than assumed, since it is a property of the data, not of the rule.
+    scored = [
+        s["delta"] for block in by_model.values() for s in block["variants"].values()
+    ]
+    n_comparisons = len(scored)
+    tied = sum(d["ties"] for d in scored)
+    folds = sum(d["n_folds"] for d in scored)
     return {
         "reference": reference,
         "n_rows": len(next(iter(aligned.values()))) if aligned else 0,
         "n_splits": n_splits,
         "columns": {name: len(features.feature_columns(f)) for name, f in aligned.items()},
-        # Carried beside the verdicts on purpose. Reading only the rows that came out
-        # "improvement" out of a grid this size is the same selection error the project
-        # avoids elsewhere by not choosing a winner on the rows it then publishes.
         "n_comparisons": n_comparisons,
-        "expected_by_chance": expected_by_chance(n_comparisons, n_splits),
+        "tied_folds": tied,
+        "scored_folds": folds,
+        "expected_by_chance": expected_by_chance(
+            n_comparisons, n_splits, tied / folds if folds else 0.0
+        ),
         "by_model": by_model,
     }
 
@@ -196,6 +227,19 @@ def wind_encoding_variants(pm25: pd.DataFrame, weather: pd.DataFrame) -> dict:
     and 1° are one degree apart and the model sees them as the whole range apart. Ridge
     structurally cannot repair that; a tree can, with a second split.
     """
+    missing = [
+        c for c in (WIND_DIRECTION_COLUMN, WIND_SPEED_COLUMN) if c not in weather.columns
+    ]
+    if missing:
+        # Named the same way the cross-pollutant path names an absent pollutant. Left to
+        # pandas this is a bare KeyError from inside a variant builder, which says nothing
+        # about which of the two experiments could not run.
+        raise ValueError(
+            f"the weather frame has no {', '.join(missing)}; the wind experiment needs both "
+            f"direction and speed. It holds: "
+            f"{', '.join(c for c in weather.columns if c != 'timestamp')}"
+        )
+
     raw = weather
     radians = np.deg2rad(weather[WIND_DIRECTION_COLUMN])
 

@@ -50,10 +50,11 @@ These override convenience. Each one exists because the project already got it w
   answer a given hour, so the serving policy hands it over on a *majority* of folds
   (`horizon._model_earns_the_lead`). The two rules disagree on cases that occur here — do not
   collapse them into one function.
-- **Count the comparisons before believing one.** A sign-consistent sweep over 5 folds is a
-  1-in-16 event, so a grid of a dozen manufactures roughly one improvement from noise.
-  `pipeline ab` prints the expectation beside its verdicts; weigh a survivor by whether
-  anything predicted it *in advance*.
+- **Count the comparisons before believing one.** A sign-consistent verdict over 5 folds is a
+  1-in-16 event under a change that does nothing — and **ties raise that rate, not lower it**,
+  since a tie cannot contradict. At this project's own tie rate a grid of a dozen expects ~1.4
+  such results from noise. `pipeline ab` prints the expectation per table and for the whole
+  run; weigh a survivor by whether anything predicted it *in advance*, not by the sweep.
 - **Measure importance by removal, on held-out rows, by group** (`pipeline importance`).
   Near-duplicate columns mask each other, and impurity `feature_importances_` disagrees with
   held-out measurement here. Name the estimator beside any ranking.

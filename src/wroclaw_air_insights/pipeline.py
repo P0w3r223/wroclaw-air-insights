@@ -308,8 +308,29 @@ def _print_ab_result(experiment: str, result: dict) -> None:
                   f"({delta['mean']:+} paired, better on {delta['model_wins']}/"
                   f"{delta['n_folds']} folds, {delta['ties']} tied) "
                   f"-> {scored['verdict'].upper()}")
-    print(f"[ab]   {result['n_comparisons']} comparisons in this table; noise alone is "
+    print(f"[ab]   {result['n_comparisons']} comparisons in this table, "
+          f"{result['tied_folds']} of {result['scored_folds']} folds tied; noise alone is "
           f"expected to produce ~{result['expected_by_chance']} sign-consistent verdicts")
+
+
+def _print_ab_multiplicity(results: dict) -> None:
+    """The run-level count, which is the family a reader actually picks a survivor from.
+
+    Per-table lines are not enough and stating only them would understate the problem by
+    however many tables ran: someone scanning both experiments for the rows that came out
+    "improvement" is choosing from every comparison the run made, not from six.
+    """
+    comparisons = sum(r["n_comparisons"] for r in results.values())
+    tied = sum(r["tied_folds"] for r in results.values())
+    folds = sum(r["scored_folds"] for r in results.values())
+    if len(results) < 2 or not folds:
+        return
+    expected = ab_harness.expected_by_chance(
+        comparisons, config.CV_SPLITS, tied / folds
+    )
+    print(f"[ab] across the whole run: {comparisons} comparisons, {tied}/{folds} folds tied "
+          f"-> ~{expected} sign-consistent verdicts expected from noise alone. Weigh any "
+          f"survivor by whether something predicted it in advance.")
 
 
 def ab(
@@ -349,6 +370,7 @@ def ab(
         )
         _print_ab_result(name, result)
         results[name] = result
+    _print_ab_multiplicity(results)
     return results
 
 
