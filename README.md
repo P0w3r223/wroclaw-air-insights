@@ -21,7 +21,7 @@ SQL database, an insights report, and a **24-hour PM2.5 forecast**.
 4. **Forecast** — predicts PM2.5 24 hours ahead from time + weather features, compares
    several models against naive baselines (single split **and** rolling-origin CV), and
    serves a **live next-24h forecast** from the saved bundle — which carries a per-lead
-   policy, so the early hours are answered by the naive rule wherever it measured better.
+   policy, so the early hours are answered by the naive rule wherever it wins the folds.
 5. **Publish** — a scheduled GitHub Actions job refreshes the data daily and deploys an
    HTML report (live forecast + air-quality index) to GitHub Pages.
 
@@ -43,10 +43,12 @@ endpoint details, and the reasoning behind these choices.
 > current state of the deployed model. The [live page](https://p0w3r223.github.io/wroclaw-air-insights/)
 > recomputes the headline error, the model-vs-naive gap, the model selection, the lead axis and
 > the clean/elevated split on every refresh — that is where to read what they come out to today.
-> The candidate comparison, the importance tables and the null result are one-off measurements
-> kept here instead, reproducible with `pipeline compare` and `pipeline importance`. Where a
-> *decision* rather than a number can move with the data, the text below describes how the
-> decision is made and leaves the answer to the page.
+> The candidate comparison and the importance tables are one-off measurements kept here
+> instead, re-runnable with `pipeline compare` and `pipeline importance`; the null result was a
+> bespoke A/B on a re-encoded feature that no command reproduces, and it is recorded in
+> [`docs/ideas/0001_report_roadmap.md`](docs/ideas/0001_report_roadmap.md). Where a *decision*
+> rather than a number can move with the data, the text below describes how the decision is
+> made and leaves the answer to the page.
 
 Hourly PM2.5 shows the expected strong seasonality — low in summer, peaking in the
 winter heating season, when the WHO 24-hour guideline is regularly exceeded:
@@ -160,8 +162,9 @@ flattering one.
 **Where the skill comes from — measured on held-out rows, not on training splits.** The
 question worth answering is *what would the forecast lose without this?*, so each source of
 information is removed and the model scored again (MAE, µg/m³; full model 3.64, persistence
-4.87). The shuffled column is stochastic — ten repeats — so it reproduces in shape rather than
-digit for digit:
+4.87). The permutation is seeded, so it is the *window* that moves, not the measurement:
+re-running `pipeline importance` today scores a different rolling year, and what should
+survive is the shape rather than the digits:
 
 | Source | MAE if shuffled | MAE if retrained without it |
 |--------|:---------------:|:---------------------------:|
