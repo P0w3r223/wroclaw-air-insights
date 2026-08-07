@@ -20,7 +20,8 @@ SQL database, an insights report, and a **24-hour PM2.5 forecast**.
    seasonality, exceedances of air-quality norms, and cross-pollutant/weather relations.
 4. **Forecast** — predicts PM2.5 24 hours ahead from time + weather features, compares
    several models against naive baselines (single split **and** rolling-origin CV), and
-   serves a **live next-24h forecast** from the saved model.
+   serves a **live next-24h forecast** from the saved bundle — which carries a per-lead
+   policy, so the early hours are answered by the naive rule wherever it measured better.
 5. **Publish** — a scheduled GitHub Actions job refreshes the data daily and deploys an
    HTML report (live forecast + air-quality index) to GitHub Pages.
 
@@ -40,9 +41,12 @@ endpoint details, and the reasoning behind these choices.
 > here moves. These come from **one run** — 8 584 hourly rows, 2025-07-24 → 2026-07-17,
 > held-out window 2026-05-06 → 2026-07-17 — and they are quoted as a dated record, not as the
 > current state of the deployed model. The [live page](https://p0w3r223.github.io/wroclaw-air-insights/)
-> carries today's values, recomputed on every refresh. Where a *decision* rather than a number
-> can move with the data, the text below describes how the decision is made and leaves the
-> answer to the page.
+> recomputes the headline error, the model-vs-naive gap, the model selection, the lead axis and
+> the clean/elevated split on every refresh — that is where to read what they come out to today.
+> The candidate comparison, the importance tables and the null result are one-off measurements
+> kept here instead, reproducible with `pipeline compare` and `pipeline importance`. Where a
+> *decision* rather than a number can move with the data, the text below describes how the
+> decision is made and leaves the answer to the page.
 
 Hourly PM2.5 shows the expected strong seasonality — low in summer, peaking in the
 winter heating season, when the WHO 24-hour guideline is regularly exceeded:
@@ -65,8 +69,9 @@ on the same rolling folds. The published page leads with the year-round figure w
 comes out to, because the split's number is a summer one, and quoting it beside an
 all-seasons error credits the model with a season it was not tested across. The gap held
 **fold by fold, 5 of 5** (mean +1.64 µg/m³), which is what makes it a result rather than an
-average that one hard winter fold could be carrying — and the fold tally, not the average,
-is what the page reports.
+average that one hard winter fold could be carrying. The page publishes the year-round gap as
+a percentage; the fold tally behind it is visible in the lead table further down, whose +24 h
+row is this same comparison.
 
 **The pipeline picks the model itself**, and it picks on rolling-origin cross-validation,
 never on the split above — choosing a winner on the rows the report then publishes would
@@ -78,11 +83,15 @@ the gap to the ±2.5 swing between folds — that swing is seasonal and common t
 candidate, so testing against it would call the model's own 1.64 win over the naive rule a
 null too. Paired, on that run: gradient boosting beats RandomForest on 4 folds of 5 (+0.21,
 losing the first) and Ridge on 4 of 5 with the second fold a **tie** — those two land 0.003 µg/m³
-apart there, below the precision the published report prints, and counting that as a fold won would be
-the same overclaim one level down. So the honest summary is still "the top two are close", but for the right
-reason: the winner changes hands on one fold in five, and because the pipeline retrains
-daily on a rolling year it can change on the next run. The published report always names the
-model it actually used.
+apart there, below the precision the published report prints, and counting that as a fold won
+would be the same overclaim one level down.
+
+*How* close the top two are is a per-run answer, and the page gives it — the selection note
+states the paired margin and the fold tally that run produced. On the run above the honest
+summary was "close", and for the right reason rather than the tempting one: not because 6.97
+and 7.18 look similar, but because the winner changed hands on one fold in five. Since the
+pipeline retrains daily on a rolling year, that can read differently on the next run, and the
+published report always names the model it actually used.
 
 **One error figure was describing twenty-four different tasks.** The model is trained on a
 single task — predict 24 hours ahead — and the lead time is not one of its inputs. It cannot
@@ -139,18 +148,20 @@ applies to daily means):
 | at or above 15 µg/m³ (437 h) | 4.61 | **−2.73** | 6.35 | −4.95 |
 
 The model runs high on clean air and low on dirty air — regression toward the mean, which the
-aggregate bias of +0.91 hides by netting the two against each other. The naive rule does the
-same thing more strongly, which is the useful context: this is a property of the problem, not
-a defect the model introduces. On that run it flagged **57%** of genuinely elevated hours
-against the naive rule's 40%, and **42%** of its warnings were wrong against the naive rule's
-60% — better on both counts, and nowhere near good enough to call it an alerting system, which
-is why the page states both numbers rather than only the flattering one.
+aggregate bias of +0.91 hides by netting the two against each other. The naive rule's swing is
+wider still — it under-calls the elevated hours by −4.95 against the model's −2.73, so its two
+ends sit 6.65 µg/m³ apart against the model's 4.88. That is the useful context: mean-reversion
+is a property of the problem, not something the model introduces. On that run the model flagged
+**57%** of genuinely elevated hours against the naive rule's 40%, and **42%** of its warnings
+were wrong against the naive rule's 60% — better on both counts, and nowhere near good enough
+to call it an alerting system, which is why the page states both numbers rather than only the
+flattering one.
 
 **Where the skill comes from — measured on held-out rows, not on training splits.** The
 question worth answering is *what would the forecast lose without this?*, so each source of
 information is removed and the model scored again (MAE, µg/m³; full model 3.64, persistence
-4.87). Unlike everything above, this table is *not* on the live page — it is a one-off
-measurement on the run above, reproducible on current data with `pipeline importance`:
+4.87). The shuffled column is stochastic — ten repeats — so it reproduces in shape rather than
+digit for digit:
 
 | Source | MAE if shuffled | MAE if retrained without it |
 |--------|:---------------:|:---------------------------:|
@@ -179,8 +190,8 @@ An earlier version of this section quoted the left column and concluded the mode
 "persistence plus a weather correction". The right column, and the group table above, say
 it is both in equal measure. Reproduce either with `pipeline importance`.
 
-The figure below is the left column — the impurity ranking, from a RandomForest that is no
-longer the deployed model. It is kept as the contrast, not as the answer:
+The figure below is the left column — the impurity ranking, from a RandomForest, which the
+pipeline scored but did not select on that run. It is kept as the contrast, not as the answer:
 
 ![Feature importances](reports/figures/fig6_importances.png)
 
@@ -250,9 +261,12 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/01_analysis.ipynb
 - **Comparisons judged on the paired per-fold difference**, not on the spread of MAE levels
   between folds — that spread is seasonal and common to every predictor, so testing against
   it would call this project's own headline a null result.
-- **Each lead served by the predictor that actually wins it** — the model cannot see the lead
-  time, so its error is constant across the published chart while the naive rule's is not.
-  The boundary is re-measured on every run rather than fixed in code.
+- **Each lead served by the predictor that earns it, as one prefix decision** — the model
+  cannot see the lead time, so its error is constant across the published chart while the naive
+  rule's is not. A lead goes to the model only on a strict majority of folds, ties included
+  against it, and the boundary is re-measured on every run rather than fixed in code. One
+  prefix rather than 24 independent choices, which would be a best-of-N on the folds that also
+  produce the published figures.
 - **Leakage-free inference** — training and live prediction share one feature contract:
   every feature is knowable at the forecast origin.
 - **Importance measured by removal, on held-out rows** — grouped, because near-duplicate
