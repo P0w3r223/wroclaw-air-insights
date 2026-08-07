@@ -24,6 +24,16 @@ from wroclaw_air_insights import config
 from wroclaw_air_insights.forecast import baseline, features
 
 MODEL_FILENAME = "pm25_forecaster.joblib"
+# How many column names to name before the message stops being readable.
+_MISMATCH_PREVIEW = 6
+
+
+class FeatureMismatchError(RuntimeError):
+    """The saved model expects columns the current feature builder does not produce."""
+
+
+class UnknownModelError(RuntimeError):
+    """A model name that the candidate registry does not hold."""
 
 
 def time_based_split(
@@ -171,13 +181,15 @@ def backtest_series(
 def train_forecaster(
     x_train: pd.DataFrame, y_train: pd.Series, random_state: int = 42
 ) -> RandomForestRegressor:
-    """Fit the PM2.5 forecaster (random forest — robust, gives feature importances)."""
-    model = RandomForestRegressor(
-        n_estimators=300,
-        min_samples_leaf=2,
-        random_state=random_state,
-        n_jobs=-1,
-    )
+    """Fit the random-forest candidate — the one estimator that exposes impurity importances.
+
+    Kept for the analysis notebook, which needs a concrete forest rather than whichever
+    model selection happened to deploy. It takes its hyperparameters from
+    :func:`build_models` instead of restating them: the pipeline has selected its own
+    winner since ``select_model`` landed, so a second copy of ``n_estimators`` here would be
+    a definition nothing shipped reads, drifting quietly away from the one that ships.
+    """
+    model = candidate("RandomForest", random_state)
     model.fit(x_train, y_train)
     return model
 
@@ -272,7 +284,7 @@ def group_importances(
     x_test, y_test = features.split_xy(test_df)
     groups = groups or features.feature_groups(x_train.columns)
 
-    estimator = build_models(random_state)[model_name]
+    estimator = candidate(model_name, random_state)
     estimator.fit(x_train, y_train)
     full_mae = float(mean_absolute_error(y_test, estimator.predict(x_test)))
 
@@ -285,7 +297,7 @@ def group_importances(
         permuted = _permute_group(estimator, x_test, y_test, present, n_repeats, rng)
         remaining = [c for c in x_train.columns if c not in present]
         if remaining:
-            refit = build_models(random_state)[model_name]
+            refit = candidate(model_name, random_state)
             refit.fit(x_train[remaining], y_train)
             retrained = float(mean_absolute_error(y_test, refit.predict(x_test[remaining])))
         else:
@@ -328,7 +340,7 @@ def run_experiment(
     x_train, y_train = features.split_xy(train_df)
     x_test, y_test = features.split_xy(test_df)
 
-    model = build_models(random_state)[model_name]
+    model = candidate(model_name, random_state)
     model.fit(x_train, y_train)
 
     model_predictions = model.predict(x_test)
@@ -391,6 +403,25 @@ def build_models(random_state: int = 42) -> dict[str, object]:
             n_estimators=300, min_samples_leaf=2, random_state=random_state, n_jobs=-1
         ),
     }
+
+
+def candidate(model_name: str, random_state: int = 42) -> object:
+    """One candidate from the registry, or an error that names what is on offer.
+
+    Every caller used to index ``build_models()`` directly, so a name the registry does not
+    hold surfaced as ``KeyError: 'RandomForest'`` with nothing else. That name can come from
+    a *saved bundle* — ``pipeline importance`` measures whatever model the bundle says was
+    deployed — so removing a candidate from the registry breaks every command that reads a
+    bundle written before the removal, and says only the name back.
+    """
+    models = build_models(random_state)
+    if model_name not in models:
+        raise UnknownModelError(
+            f"No candidate named {model_name!r}. The registry holds: {', '.join(models)}. "
+            f"A saved bundle can name a model a later version dropped — retrain with "
+            f"`python -m wroclaw_air_insights.pipeline train`."
+        )
+    return models[model_name]
 
 
 _BASELINES = {
@@ -486,7 +517,7 @@ def cross_validate(
     the mean/std.
     """
     x_all, y_all = features.split_xy(features_df)
-    model = build_models(random_state)[model_name]
+    model = candidate(model_name, random_state)
     splitter = TimeSeriesSplit(n_splits=n_splits)
 
     fold_mae: list[float] = []
@@ -523,6 +554,38 @@ def save_model(
         path,
     )
     return path
+
+
+def _name_some(columns: list[str]) -> str:
+    shown = ", ".join(columns[:_MISMATCH_PREVIEW])
+    rest = len(columns) - _MISMATCH_PREVIEW
+    return f"{shown} (+{rest} more)" if rest > 0 else shown
+
+
+def align_features(frame: pd.DataFrame, feature_names: list[str]) -> pd.DataFrame:
+    """Select the model's columns in training order, or say what a retrain would fix.
+
+    Any change to the feature builder silently invalidates a saved bundle, and the failure
+    lands deep in the serving path as a bare pandas ``KeyError`` listing column names with
+    no hint of the cause. The daily job retrains and heals itself; a local run does not,
+    and the report build fails the same way with the same unhelpful message.
+    """
+    missing = [name for name in feature_names if name not in frame.columns]
+    if not missing:
+        return frame[feature_names]
+
+    available = set(frame.columns) - {features.TARGET_COLUMN, "timestamp"}
+    unexpected = sorted(available - set(feature_names))
+    surplus = (
+        f" The builder now produces {_name_some(unexpected)}, which it does not."
+        if unexpected
+        else ""
+    )
+    raise FeatureMismatchError(
+        f"The saved model expects {len(missing)} column(s) the feature builder no longer "
+        f"produces: {_name_some(missing)}.{surplus} The bundle predates a change to the "
+        f"features — retrain with `python -m wroclaw_air_insights.pipeline train`."
+    )
 
 
 def load_model(models_dir: Path = config.MODELS_DIR) -> dict:

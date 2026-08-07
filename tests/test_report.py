@@ -176,6 +176,18 @@ def test_metrics_table_omits_the_window_when_it_is_incomplete(window):
     assert "None" not in html
 
 
+def test_metrics_table_caption_counts_the_rows_it_actually_rendered():
+    # The caption used to say "All three" unconditionally, including for a legacy bundle
+    # that renders the model row alone — a claim about rows that are not on the page.
+    full = report._metrics_table(_fresh_metadata())
+    assert "All 3 are scored on the same held-out window" in full
+
+    alone = report._metrics_table(_LEGACY_METADATA)
+    assert alone.count("<tr") == 2  # header + the model row
+    assert "All 3" not in alone
+    assert "Scored on the held-out window" in alone
+
+
 def test_metrics_table_falls_back_to_the_default_baseline_label():
     html = report._metrics_table(_fresh_metadata(baseline_label=None))
     assert baseline.LABELS["persistence"] in html
@@ -374,6 +386,16 @@ def test_regime_section_says_the_threshold_is_a_reference_not_a_compliance_test(
     assert "not as a compliance test" in html
 
 
+def test_regime_section_honours_a_stored_threshold_of_zero():
+    # `_number(...) or DEFAULT` swallows 0.0, which would relabel every row with the WHO
+    # level while the numbers underneath were split somewhere else entirely.
+    zeroed = _regime()
+    zeroed["threshold"] = 0.0
+    html = report._regime_section(_fresh_metadata(regime=zeroed))
+    assert "Below 0 µg/m³" in html
+    assert "15 µg/m³" not in html
+
+
 def test_regime_section_drops_the_detection_line_when_no_hour_was_elevated():
     calm = _regime()
     calm["elevated"] = {"n": 0, "mae": None, "bias": None}
@@ -402,7 +424,7 @@ def test_regime_section_renders_nothing_without_a_breakdown(metadata):
 
 
 # --- _backtest_section --------------------------------------------------------
-def _backtest(hours: int = 48, naive: bool = True):
+def _backtest(hours: int = 14 * 24 + 1, naive: bool = True):
     stamps = pd.date_range("2026-07-03", periods=hours, freq="h")
     series = {
         "days": 14,
@@ -418,8 +440,22 @@ def _backtest(hours: int = 48, naive: bool = True):
 def test_backtest_section_embeds_the_chart_and_counts_the_hours():
     html = report._backtest_section(_fresh_metadata(backtest=_backtest()))
     assert "The last 14 days of the test window" in html
-    assert "48 hours the model had never seen" in html
+    assert "337 hours the model had never seen" in html
     assert 'src="data:image/png;base64,' in html
+
+
+@pytest.mark.parametrize(
+    "hours,expected",
+    [(14 * 24 + 1, "The last 14 days"), (49, "The last 2 days"),
+     (25, "The last day"), (6, "The last hours")],
+    ids=["full_window", "two_days", "one_day", "part_of_a_day"],
+)
+def test_backtest_section_headlines_the_span_the_data_covers(hours, expected):
+    """The stored `days` is what was requested. A shorter test window would otherwise be
+    announced as 14 days — the section would be claiming coverage it does not have."""
+    series = _backtest(hours=hours)
+    assert series["days"] == 14  # request unchanged; only the heading follows the data
+    assert expected in report._backtest_section(_fresh_metadata(backtest=series))
 
 
 def test_backtest_section_says_which_model_the_chart_is_not_from():
