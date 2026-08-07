@@ -12,11 +12,16 @@ The last test feeds real ``run_experiment`` output through every section, so a r
 metadata key fails loudly instead of silently blanking the report to ``n/a``.
 """
 
+import copy
+import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from wroclaw_air_insights import report
+from wroclaw_air_insights import config, report
 from wroclaw_air_insights.forecast import baseline, features, model
 
 _NAN = float("nan")
@@ -706,3 +711,118 @@ def test_every_section_renders_real_metadata_without_falling_back(trained_metada
     for section in (table, verdict, skill, glossary):
         assert "nan" not in section
         assert "None" not in section
+
+
+# --- _render_page: the assembled page, without network, clock or filesystem ----
+_AQI = {"overall": {"category": "Dobry"}}
+_GENERATED = datetime(2026, 8, 7, 10, 15, tzinfo=ZoneInfo("Europe/Warsaw"))
+
+
+def _forecast_frame(peak=18.5, hours=24):
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-08-07 12:00", periods=hours, freq="h"),
+            "predicted_pm25": np.linspace(4.0, peak, hours),
+        }
+    )
+
+
+def _page(metadata, aqi=_AQI, forecast_df=None, station_id=None):
+    return report._render_page(
+        station_id=station_id if station_id is not None else config.PRIMARY_STATION_ID,
+        forecast_df=_forecast_frame() if forecast_df is None else forecast_df,
+        aqi=aqi,
+        metadata=metadata,
+        generated_at=_GENERATED,
+    )
+
+
+def _prose_only(html):
+    """Strip the embedded PNGs — base64 payloads contain arbitrary letter runs, so a
+    naive `"nan" not in html` would fail on chart bytes rather than on rendered text."""
+    return re.sub(r"data:image/png;base64,[^\"]*", "", html)
+
+
+def test_render_page_normalises_a_bundle_that_stored_metrics_under_the_old_key():
+    # The whole point of the extraction: this normalisation used to live inside
+    # generate_report, reachable only through a live GIOŚ call plus a saved bundle.
+    # Without it every row of the table disappears, because _row drops empty metrics.
+    html = _page({"metrics": _metrics(), "n_test": 200})
+    assert 'class="deployed"' in html
+    assert "3.00" in html
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{"metrics": _metrics(), "n_test": 200}, {}, _fresh_metadata()],
+    ids=["legacy_bundle", "empty", "fresh"],
+)
+def test_render_page_leaves_the_metadata_it_was_given_untouched(metadata):
+    # The shapes that matter are the ones WITHOUT a "model" key: on those, and only those,
+    # the old setdefault rewrote the caller's dict. A fresh bundle already carries the key,
+    # so it would keep this test green against the very code it is meant to guard against.
+    before = copy.deepcopy(metadata)
+    _page(metadata)
+    assert metadata == before
+
+
+def test_render_page_stamps_the_moment_it_was_handed_not_the_wall_clock():
+    assert "Generated 2026-08-07 10:15 CEST" in _page(_fresh_metadata())
+
+
+def test_render_page_reports_the_peak_of_the_forecast_it_was_given():
+    html = _page(_fresh_metadata(), forecast_df=_forecast_frame(peak=31.4))
+    assert "31.4 µg/m³" in html
+
+
+def test_render_page_names_the_station_it_rendered():
+    station = config.STATIONS[0]
+    assert station.name in _page(_fresh_metadata(), station_id=station.id)
+
+
+@pytest.mark.parametrize(
+    "aqi,expected_category",
+    [
+        (_AQI, "Dobry"),
+        ({}, "Brak indeksu"),
+        ({"overall": {"category": None}}, "Brak indeksu"),
+    ],
+    ids=["known", "no_index_at_all", "index_without_a_category"],
+)
+def test_render_page_always_renders_a_badge_the_palette_has_a_colour_for(
+    aqi, expected_category
+):
+    html = _page(_fresh_metadata(), aqi=aqi)
+    assert f'<span class="badge">{expected_category}</span>' in html
+    assert report._AQI_COLORS[expected_category] in html
+
+
+def test_render_page_falls_back_to_grey_for_a_category_the_palette_never_saw():
+    # GIOŚ owning the category vocabulary means a new label must not take the page down.
+    html = _page(_fresh_metadata(), aqi={"overall": {"category": "Katastrofalny"}})
+    assert '<span class="badge">Katastrofalny</span>' in html
+    assert "#9e9e9e" in html
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, _NAN_METADATA, _LEGACY_METADATA],
+    ids=["empty", "all_nan", "legacy_bundle"],
+)
+def test_render_page_never_leaks_nan_or_none_onto_the_public_page(metadata):
+    prose = _prose_only(_page(metadata))
+    assert "nan" not in prose
+    assert "None" not in prose
+    assert "inf" not in prose
+
+
+@pytest.mark.parametrize(
+    "forecast_df",
+    [_forecast_frame(hours=0), _forecast_frame().assign(predicted_pm25=_NAN)],
+    ids=["no_rows", "all_nan"],
+)
+def test_render_page_never_publishes_a_peak_it_cannot_compute(forecast_df):
+    # The peak is the largest number on the page and it comes from the frame, not from the
+    # metadata — so the metadata parametrize above cannot reach it. `predict_next_24h` raises
+    # rather than returning an empty frame today, but item 5 adds callers to this seam.
+    assert "nan" not in _prose_only(_page(_fresh_metadata(), forecast_df=forecast_df))

@@ -382,11 +382,39 @@ therefore not obviously the right one — see the entry itself.
 9. **Polish version of the page.** Data and likely audience are Polish; code and docs stay
    English by project convention.
 
-10. **Extract a pure `_render_page(...)` from `generate_report`.** Page composition is
-    currently interleaved with network I/O and file writing, so the assembled HTML — including
-    the legacy-metadata normalisation — can only be exercised with network plus a saved bundle.
-    Flagged during test writing; the helper tests replicate that step and cannot catch it
+10. **Extract a pure `_render_page(...)` from `generate_report` — done.** Page composition was
+    interleaved with network I/O and file writing, so the assembled HTML — including the
+    legacy-metadata normalisation — could only be exercised with network plus a saved bundle.
+    Flagged during test writing; the helper tests replicated that step and could not catch it
     regressing.
+
+    `_render_page` now takes what it renders — station, forecast frame, index reading,
+    metadata, and the timestamp — and returns HTML. `generate_report` keeps the three impure
+    jobs: fetching, clocking, writing. Sequenced *before* the multi-horizon work rather than
+    after it, so item 5's per-lead section is written against a testable page instead of being
+    retrofitted into a 700-line function.
+
+    Three things the extraction bought, none of which the helper tests could reach:
+
+    - The legacy normalisation is now pinned. A bundle that stored its split metrics only
+      under `"metrics"` renders every row; without the normalisation `_row` drops them all and
+      the table would publish empty.
+    - `_render_page` no longer mutates the metadata it is handed — `setdefault` rewrote the
+      caller's dict, harmless while the caller was always a fresh `load_model()`, and a trap
+      for anything that reuses a bundle.
+    - The clock is an argument, so the page is deterministic under test. Passing a fixed
+      instant is what makes the footer assertion possible at all.
+
+    And one real defect the seam exposed: **the forecast peak had no NaN gate**. Every stored
+    metric passes through `_number`, but the peak comes from the frame rather than from the
+    metadata, so an empty or all-NaN `predicted_pm25` published `Forecast peak: nan µg/m³` —
+    the largest number on the page. Not reachable today, because `predict_next_24h` raises
+    instead of returning an empty frame; reachable as soon as item 5 adds callers to this seam.
+    Now gated the same way as everything else.
+
+    Watch, for anything asserting on the whole page: the charts are inlined as base64, and a
+    payload contains arbitrary letter runs — a bare `"nan" not in html` fails on PNG bytes,
+    not on prose. The page-level tests strip `data:image/png;base64,…` first.
 
 ### Correctness debts found while measuring the above — all three done
 
