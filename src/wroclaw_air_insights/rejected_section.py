@@ -27,8 +27,11 @@ MEASUREMENT_WINDOW = "2025-07-24 → 2026-07-17"
 # a hardcoded number with no live counterpart is what this section exists to avoid.
 ERROR_WHEN_MEASURED = 6.97
 
-# The fold-to-fold spread on that window — the scale every delta below has to be read against.
-FOLD_SPREAD = 2.5
+# There used to be a FOLD_SPREAD constant here, and the first two entries below quoted their
+# result against it: "a tenth of a µg/m³ against a ±2.5 spread between folds". That test has
+# since been retracted — the spread of MAE *levels* is seasonal and common to every predictor
+# on those folds, so by that standard this project's own headline is a null too. Both entries
+# were re-measured on the per-fold difference instead, which is what they now state.
 
 
 
@@ -50,14 +53,19 @@ EXPERIMENTS: tuple[Experiment, ...] = (
         ends of the scale. Splitting it into north–south and east–west components is the
         textbook fix.""",
         finding="""Three encodings were scored on identical folds — the raw bearing, u/v
-        components, and sine/cosine. Nothing moved by more than a tenth of a µg/m³ in either
-        direction, and for the deployed model the physically correct encoding was marginally
-        <em>worse</em>. A gradient-boosted tree already carves the circle with a second split,
-        so the break at north costs it essentially nothing. The one candidate that structurally
-        cannot read a bearing — the linear model, which should have gained most — got worse
-        under u/v components; sine/cosine did help it, and that was the largest single effect
-        in the whole table, at a tenth of a µg/m³.""",
-        verdict=f"≤ 0.1 µg/m³ either way, against a ±{FOLD_SPREAD} spread between folds",
+        components, and sine/cosine — then re-scored one test period at a time when this
+        project replaced its test for what counts as a real gain. For the deployed model
+        neither re-encoding wins consistently: whichever way the average leans, some periods
+        go the other way. A gradient-boosted tree already carves the circle with a second
+        split, so the break at north costs it essentially nothing.
+
+        <em>The exception is the one the physical argument named in advance.</em> The linear
+        model — the single candidate that structurally cannot read a bearing — improved under
+        sine/cosine in every period that separated the two. That is a real effect, and it still
+        does not reach this page: the linear model trails the deployed one by more than a full
+        µg/m³, and winning back a tenth of one does not close a gap that size.""",
+        verdict="nothing consistent for the deployed model; 0.10 µg/m³ to a candidate that "
+                "starts more than a µg/m³ behind it",
     ),
     Experiment(
         title="Adding the other pollutants",
@@ -68,8 +76,15 @@ EXPERIMENTS: tuple[Experiment, ...] = (
         history gets. The argument was right in kind and wrong in magnitude: NO₂ and PM2.5 in
         a city share their sources — traffic, heating, the same boundary layer — so a day-old
         NO₂ reading mostly repeats what the weather columns and yesterday's PM2.5 already
-        carry.""",
-        verdict="≤ 0.06 µg/m³ in either direction",
+        carry. For the deployed model neither variant wins consistently; the test periods
+        disagree in both directions.
+
+        One result did come out ahead in every period — a candidate that is not the one
+        deployed, gaining four hundredths of a µg/m³ from NO₂ and CO. Nothing predicted it in
+        advance, and the run behind this entry and the one above it made twelve such
+        comparisons in all, which is roughly enough for one clean sweep to turn up from noise
+        alone. It is recorded here rather than believed.""",
+        verdict="nothing consistent for the deployed model",
     ),
     Experiment(
         title="Telling one model how far ahead it is forecasting",
