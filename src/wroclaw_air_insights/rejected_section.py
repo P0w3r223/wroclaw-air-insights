@@ -1,6 +1,6 @@
 """What this project measured and did not ship.
 
-A report that lists only what worked reads as a sales page. Three changes here were argued
+A report that lists only what worked reads as a sales page. The changes here were each argued
 for on sound reasoning, measured against the project's own rolling folds, and dropped. The
 measurements are worth more than the changes would have been, so the page states them.
 
@@ -31,6 +31,7 @@ ERROR_WHEN_MEASURED = 6.97
 FOLD_SPREAD = 2.5
 
 
+
 @dataclass(frozen=True)
 class Experiment:
     """One change that was measured and not shipped."""
@@ -49,12 +50,14 @@ EXPERIMENTS: tuple[Experiment, ...] = (
         ends of the scale. Splitting it into north–south and east–west components is the
         textbook fix.""",
         finding="""Three encodings were scored on identical folds — the raw bearing, u/v
-        components, and sine/cosine. Every difference came in at 0.09 µg/m³ or less, and for
-        the deployed model the physically correct encoding was marginally <em>worse</em>. A
-        gradient-boosted tree already carves the circle with a second split, so the break at
-        north costs it essentially nothing. Even the one candidate that structurally cannot
-        read a bearing — the linear model, which should have gained most — got worse.""",
-        verdict="≤ 0.09 µg/m³, against a ±2.5 spread between folds",
+        components, and sine/cosine. Nothing moved by more than a tenth of a µg/m³ in either
+        direction, and for the deployed model the physically correct encoding was marginally
+        <em>worse</em>. A gradient-boosted tree already carves the circle with a second split,
+        so the break at north costs it essentially nothing. The one candidate that structurally
+        cannot read a bearing — the linear model, which should have gained most — got worse
+        under u/v components; sine/cosine did help it, and that was the largest single effect
+        in the whole table, at a tenth of a µg/m³.""",
+        verdict=f"≤ 0.1 µg/m³ either way, against a ±{FOLD_SPREAD} spread between folds",
     ),
     Experiment(
         title="Adding the other pollutants",
@@ -126,10 +129,12 @@ def render(metadata: dict) -> str:
     if not EXPERIMENTS:
         return ""
     entries = "".join(_entry(experiment) for experiment in EXPERIMENTS)
+    # No count in the prose: "Three changes below" would still ship on the day a fourth entry
+    # is added, with every test here green. The list states its own length.
     return f"""  <h3>What was measured and not shipped</h3>
-  <p>Three changes below were argued for on reasoning that still looks sound, tested against
-  the same rolling folds every figure on this page comes from, and dropped. They are here
-  because a forecast is easier to trust from a project that publishes what did not work — and
+  <p>The changes below were argued for on reasoning that still looks sound, tested against the
+  same rolling folds the headline error comes from, and dropped. They are here because a
+  forecast is easier to trust from a project that publishes what did not work — and
   because measuring them is what caught two errors this page was publishing at the time: an
   improvement figure that paired an all-seasons error with a summer gain, and a single error
   figure standing in for twenty-four different tasks.</p>

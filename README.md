@@ -201,8 +201,10 @@ pipeline scored but did not select on that run. It is kept as the contrast, not 
 **A documented null result.** That impurity ranking put wind *direction* above wind *speed*,
 which suggested the raw 0–360° encoding (discontinuous at north) was costing accuracy.
 Re-encoding it as u/v components and as sin/cos was A/B-tested on the same folds: CV MAE
-moved by ≤0.09 µg/m³ against a fold spread of ±2.5, and for the deployed model it moved the
-wrong way. The change was rejected rather than shipped — see
+moved by no more than 0.10 µg/m³ in either direction against a fold spread of ±2.5, and for
+the deployed model it moved the wrong way. The largest single movement was the linear model
+*improving* by that 0.10 under sin/cos — still a tenth of the noise it would have to clear.
+The change was rejected rather than shipped — see
 [`docs/ideas/0001_report_roadmap.md`](docs/ideas/0001_report_roadmap.md).
 
 The full narrative analysis — seasonality, norm exceedances, an hour × weekday heatmap,
