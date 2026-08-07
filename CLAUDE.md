@@ -1,120 +1,90 @@
 # CLAUDE.md — wroclaw-air-insights
 
-Guidance for Claude Code (and any contributor) working in this repository.
-
-## What this project is
-
-Air quality analysis for Wrocław based on open GIOŚ data: an ingestion pipeline,
-a SQL (SQLite) store, an analysis notebook with insights, and a **24h PM2.5
-forecast** compared against a naive baseline. Portfolio project A1 — the opening
-piece that proves solid data work + a first, methodologically correct ML model.
+Air quality analysis for Wrocław from open GIOŚ data: ingestion, a SQLite store, an analysis
+notebook, and a PM2.5 forecast published daily to GitHub Pages. Portfolio project A1 — it is
+judged on methodological correctness, not on model accuracy.
 
 ## Architecture
 
 ```
 src/wroclaw_air_insights/
-  config.py          # single source of truth: stations, pollutants, endpoints, norms, paths
-  ingest/
-    gios.py          # GIOŚ client: multi-pollutant current/archival + air-quality index
-    weather.py       # Open-Meteo client (forecast + historical); I/O split from parsing
-  db.py              # SQLite: measurements (station, pollutant, hour) + weather
-  clean.py           # pure cleaning/validation functions (unit-tested)
+  config.py            # stations, pollutants, endpoints, norms, paths, lead grid, fold count
+  ingest/gios.py       # GIOŚ client: current + archival measurements, air-quality index
+  ingest/weather.py    # Open-Meteo client; I/O split from parsing
+  db.py                # SQLite: measurements (station, pollutant, hour) + weather
+  clean.py             # pure cleaning/validation
   forecast/
-    features.py      # leakage-free features; build_features (train) + build_inference_features (serve)
-    baseline.py      # naive baselines (persistence / seasonal)
-    model.py         # time-based split, model comparison, rolling CV, joblib persistence
-    serving.py       # live next-24h forecast from the saved model
-  report.py          # self-contained HTML report for GitHub Pages
-  pipeline.py        # CLI: ingest / train / compare / predict / all
-notebooks/01_analysis.ipynb   # narrative EDA + figures
-tests/                # pytest — cleaning, parsing, db, forecast, save/load
-docs/research/        # data-source research + decisions
-.github/workflows/    # ci.yml (tests) + refresh.yml (daily Pages deploy)
+    features.py        # leakage-free features; build_features (train) / build_inference_features (serve)
+    baseline.py        # naive rules + their published labels
+    model.py           # split, selection, rolling CV, paired_delta, bundle persistence
+    horizon.py         # per-lead scoring and the serving policy (which predictor answers which hour)
+    serving.py         # live next-24h forecast from the saved bundle
+  charts.py            # matplotlib figures as base64
+  formatting.py        # the n/a gate every published number passes
+  horizon_section.py   # the lead-axis section of the report
+  report.py            # page composition; _render_page is pure, generate_report does the I/O
+  pipeline.py          # CLI: ingest / train / compare / importance / predict / all
+notebooks/01_analysis.ipynb
+tests/                 # pytest
+docs/ideas/            # roadmap: measured results, including the rejected ones
+docs/research/         # data-source research
+.github/workflows/     # ci.yml (tests) + refresh.yml (daily Pages deploy)
 ```
 
-## Methodology rules (do not violate)
+## Methodology rules
 
-- **Time-based split, never random.** This is time-series forecasting; a random
-  train/test split leaks the future into the past. Split chronologically.
-- **Always beat a baseline, and say by how much.** The forecast is only meaningful
-  relative to a naive baseline (e.g. persistence). Report the delta and why.
-- **One clock.** GIOŚ returns local Warsaw time; Open-Meteo is requested in
-  `Europe/Warsaw`. Keep timestamps consistent before joining.
-- **Missing data is real.** Station readings have gaps (`null`) — handle explicitly,
-  never assume a continuous series.
-- **Train/serve consistency.** Weather features for training come from Open-Meteo's
-  Historical Forecast API (same models as the live Forecast API).
-- **An accuracy claim carries its uncertainty.** State a CV MAE delta next to the fold
-  spread. A delta inside the spread is a null result — publish it as one, don't ship it as
-  an improvement. The rejected wind-encoding item in `docs/ideas/0001_report_roadmap.md`
-  is the worked example.
-- **Importance is measured by removal, on held-out rows** (`pipeline importance`), and by
-  group — near-duplicate columns mask each other, and impurity `feature_importances_`
-  disagrees with held-out measurement on this dataset. Never publish a ranking without
-  naming which estimator produced it.
+These override convenience. Each one exists because the project already got it wrong once.
+
+- **Split chronologically, never randomly.** A random split on a time series leaks the future
+  into the past.
+- **Report against a baseline, with the delta.** A forecast means nothing on its own.
+- **Judge a comparison on the paired per-fold difference** (`model.paired_delta`), not on the
+  spread of MAE levels. That spread is seasonal and common to every predictor on those folds,
+  so testing against it would call this project's own headline a null. A delta that changes
+  sign across folds is a null result — publish it as one. Worked reasoning and the two
+  outstanding nulls: `docs/ideas/0001_report_roadmap.md`.
+- **Measure importance by removal, on held-out rows, by group** (`pipeline importance`).
+  Near-duplicate columns mask each other, and impurity `feature_importances_` disagrees with
+  held-out measurement here. Name the estimator beside any ranking.
+- **One clock.** GIOŚ returns local Warsaw time and Open-Meteo is requested in `Europe/Warsaw`.
+- **Missing data is real.** Station readings have gaps — handle them, don't assume continuity.
+- **Train and serve from the same distribution.** Training weather comes from Open-Meteo's
+  Historical Forecast API, the same models the live Forecast API runs.
+- **No sentence on the published page may be contradicted by a number beside it.** Derive prose
+  from the data it describes rather than templating it off a threshold; this has been the
+  source of every defect a review has caught on the report.
 
 ## Conventions
 
-- **English** for code, comments, README, and commit messages.
-- **Conventional Commits**; commits tell a story: skeleton → feature → tests → docs.
-- **Small, testable units.** I/O separated from logic; parsing functions are pure.
-  No hardcoded values — everything configurable lives in `config.py`.
-- **Data attribution required:** GIOŚ (air quality), Open-Meteo + CAMS (weather).
-- Every modeling decision must be explainable in an interview — document the *why*.
+- English for code, comments, docs and commit messages. Conventional Commits.
+- I/O separated from logic; parsing functions pure. Configurable values live in `config.py`.
+- Attribute the data: GIOŚ (air quality), Open-Meteo + CAMS (weather).
+- Document the *why* of each modeling decision — the project is read as an explanation.
 
 ## How to run
 
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt   # Windows
-pytest                                                    # tests
+pytest
 
 python -m wroclaw_air_insights.pipeline all --days 365    # ingest + train
-python -m wroclaw_air_insights.pipeline compare           # models vs baselines + CV
+python -m wroclaw_air_insights.pipeline compare           # candidates + naive rules on shared folds
 python -m wroclaw_air_insights.pipeline importance        # held-out importance by source
 python -m wroclaw_air_insights.pipeline predict           # live next-24h forecast
-python -m wroclaw_air_insights.report                     # build the Pages HTML report
+python -m wroclaw_air_insights.report                     # build the Pages HTML
 ```
 
-Interpreter used during development: `.venv/Scripts/python.exe` (Python 3.12).
-On Windows, run the pipeline with `PYTHONIOENCODING=utf-8` (or rely on the built-in
-`sys.stdout.reconfigure`) so µg/µm and Polish characters print.
+Interpreter: `.venv/Scripts/python.exe` (3.12). Set `PYTHONIOENCODING=utf-8` on Windows so
+µg/m³ and Polish characters print.
 
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+`train` rewrites `models/pm25_forecaster.joblib`. The bundle carries a schema version, and an
+older one is refused with the retrain command rather than read half-heartedly.
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+## Code graph
 
-### When to use graph tools FIRST
-
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
-- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
-- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
-- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
-
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
-
-### Key Tools
-
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context_tool` | Need source snippets for review — token-efficient |
-| `get_impact_radius_tool` | Understanding blast radius of a change |
-| `get_affected_flows_tool` | Finding which execution paths are impacted |
-| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
-| `get_architecture_overview_tool` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. No hooks installed — run `code-review-graph update` after code changes.
-2. Use `detect_changes_tool` for code review.
-3. Use `get_affected_flows_tool` to understand impact.
-4. Use `query_graph_tool` pattern="tests_for" to check coverage.
+The repo carries two indexes: `.codegraph/` (queried with `codegraph_explore`, per the global
+rule) and `.code-review-graph/`, whose MCP tools are declared in `.mcp.json` but are not always
+loaded in a session — check what is actually available before planning around them. Neither
+index has a hook: run `code-review-graph update` after changing code, or the graph answers
+questions about the previous state of the repo.
