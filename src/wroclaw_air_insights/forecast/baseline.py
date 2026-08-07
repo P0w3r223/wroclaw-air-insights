@@ -16,6 +16,11 @@ LABELS = {
     "persistence": "same hour, yesterday",
     "seasonal": "same hour, last week",
     "climatology": "the training-period average, every hour",
+    # The lead-aware rule, scored by `forecast.horizon`. Deliberately a separate entry
+    # rather than a redefinition of "persistence": at a 24h lead the two are the same
+    # prediction, and everywhere else they are not. Repointing the existing name would
+    # have made every published figure that quotes it mean something new without saying so.
+    "origin_persistence": "the reading at the moment the forecast is issued",
 }
 
 

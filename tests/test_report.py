@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from wroclaw_air_insights import config, report
+from wroclaw_air_insights import charts, config, report
 from wroclaw_air_insights.forecast import baseline, features, model
 
 _NAN = float("nan")
@@ -52,10 +52,21 @@ def _fresh_metadata(**overrides):
             "winner": "HistGradientBoosting",
             "runner_up": "RandomForest",
             "selected_on": "rolling-origin CV MAE over 5 folds",
+            # Fold arrays included: the margin sentence is now decided by the paired
+            # per-fold difference, so a mean alone is no longer enough to render it.
             "cv_by_model": {
-                "Ridge": {"mae_mean": 8.0, "mae_std": 1.9},
-                "HistGradientBoosting": {"mae_mean": 6.5, "mae_std": 1.25},
-                "RandomForest": {"mae_mean": 6.9, "mae_std": 1.3},
+                "Ridge": {
+                    "mae_mean": 8.0, "mae_std": 1.9,
+                    "fold_mae": [8.0, 8.0, 8.0, 8.0, 8.0],
+                },
+                "HistGradientBoosting": {
+                    "mae_mean": 6.5, "mae_std": 1.25,
+                    "fold_mae": [6.4, 7.0, 6.2, 6.6, 6.3],
+                },
+                "RandomForest": {
+                    "mae_mean": 6.9, "mae_std": 1.3,
+                    "fold_mae": [6.0, 7.3, 6.9, 7.2, 7.1],
+                },
             },
         },
     }
@@ -518,11 +529,42 @@ def test_selection_note_states_that_cv_not_the_published_split_made_the_choice()
     assert "best-of-three" in html
 
 
-def test_selection_note_admits_when_the_margin_is_thinner_than_the_fold_spread():
+def test_selection_note_judges_the_margin_fold_by_fold_not_against_the_spread():
+    # The page cannot carry the paired argument in the horizon section and the refuted
+    # level-spread argument here: comparing a delta to ±std is the reasoning CLAUDE.md now
+    # names as wrong, and by that test the model's own win over the naive rule is a null.
     html = report._selection_note(_fresh_metadata())
-    assert "6.50 µg/m³ against RandomForest’s 6.90" in html
-    assert "±1.25" in html
+    assert "winning 4 of 5 folds" in html
     assert "these two are close" in html
+    assert "±1.25" not in html
+    assert "swing between folds" not in html
+
+
+def test_selection_note_states_the_margin_as_the_difference_not_the_winners_own_error():
+    # "It won by 6.50" beside "6.50 against 6.90" invites the reader to subtract and catch
+    # the page out by a factor of sixteen. The margin is the gap, not the winner's error.
+    html = report._selection_note(_fresh_metadata())
+    assert "0.40 µg/m³ ahead of RandomForest" in html
+    assert "6.50 against 6.90" in html
+    assert "won by 6.50" not in html
+
+
+def test_selection_note_says_so_when_the_winner_was_never_behind():
+    metadata = _fresh_metadata()
+    metadata["selection"]["runner_up"] = "Ridge"
+    html = report._selection_note(metadata)
+    assert "winning 5 of 5 folds" in html
+    assert "never came out behind on a fold" in html
+
+
+def test_selection_note_counts_an_undisplayable_fold_margin_as_a_tie():
+    metadata = _fresh_metadata()
+    scores = metadata["selection"]["cv_by_model"]
+    scores["RandomForest"]["fold_mae"] = [6.401, 7.3, 6.9, 7.2, 7.1]
+    html = report._selection_note(metadata)
+    assert "winning 4 of 5 folds, 1 tied" in html
+    # No fold pointed the other way once the 0.001 separation is called what it is.
+    assert "never came out behind on a fold" in html
 
 
 def test_selection_note_warns_that_the_winner_can_change_between_runs():
@@ -539,7 +581,7 @@ def test_selection_note_drops_the_margin_when_there_is_no_runner_up():
     )
     html = report._selection_note(metadata)
     assert "<strong>Ridge</strong>" in html
-    assert "slim margin" not in html
+    assert "ahead on" not in html
     assert "None" not in html
 
 
@@ -639,13 +681,132 @@ def test_glossary_drops_the_r2_reading_when_r2_was_not_stored():
     assert "R² — coefficient of determination" in html
 
 
+# --- _horizon_section: one error figure was describing 24 different tasks ------
+def _lead_record(lead, model_mae=6.97, naive_mae=3.75, wins=0, folds=5):
+    return {
+        "lead": lead,
+        "n_scored": 1700,
+        "model_fold_mae": [model_mae] * folds,
+        "naive_fold_mae": [naive_mae] * folds,
+        "model_mae": model_mae,
+        "naive_mae": naive_mae,
+        "delta": {
+            "per_fold": [round(naive_mae - model_mae, 3)] * folds,
+            "mean": round(naive_mae - model_mae, 3),
+            "std": 0.0,
+            "n_folds": folds,
+            "model_wins": wins,
+            "consistent": wins in (0, folds),
+        },
+    }
+
+
+def _horizon(crossover=6):
+    leads = (1, 3, 6, 12, 24)
+    naive = {1: 3.75, 3: 5.51, 6: 7.20, 12: 8.51, 24: 8.61}
+    return {
+        "crossover_lead": crossover,
+        "naive_label": baseline.LABELS["origin_persistence"],
+        "leads": {
+            lead: ("naive" if lead <= crossover else "model") for lead in leads
+        },
+        "scored": {
+            lead: _lead_record(lead, naive_mae=naive[lead], wins=0 if lead <= crossover else 5)
+            for lead in leads
+        },
+    }
+
+
+def test_horizon_section_states_that_the_model_cannot_see_the_lead():
+    html = report._horizon_section(_fresh_metadata(horizon=_horizon()))
+    assert "the lead time is not" in html
+    assert "the same</em> at every hour" in html
+
+
+def test_horizon_section_names_the_predictor_serving_each_lead():
+    html = report._horizon_section(_fresh_metadata(horizon=_horizon(crossover=6)))
+    assert "For the first 6 hours" in html
+    assert baseline.LABELS["origin_persistence"] in html
+
+
+def test_horizon_section_does_not_call_the_model_worse_where_the_table_says_better():
+    # The boundary lead can be one the model wins on the mean and loses on the folds. A
+    # sentence templated off the crossover alone would flatly say "measurably worse" while
+    # the row directly above it prints a positive delta.
+    horizon_meta = _horizon(crossover=6)
+    horizon_meta["scored"][6] = _lead_record(6, model_mae=6.97, naive_mae=7.20, wins=2)
+    html = report._horizon_section(_fresh_metadata(horizon=horizon_meta))
+
+    assert "measurably worse" not in html
+    assert "(+0.23 µg/m³) but holds that lead in only 2 folds of" in html
+    # The tally is interpolated, so the sentence that reads it must be too — a hardcoded
+    # "two periods in five" would contradict the numbers beside it on the next retrain.
+    assert "An average that survives 2 periods in 5" in html
+
+
+def test_horizon_section_does_not_claim_the_earlier_leads_are_outright_losses_unmeasured():
+    # A lead below the crossover can also be ahead on the mean. Saying "the naive rule wins
+    # outright" over that range would be the same defect one lead lower — and lead 3 is
+    # always printed in the table, so the reader would see it.
+    horizon_meta = _horizon(crossover=6)
+    horizon_meta["scored"][3] = _lead_record(3, model_mae=6.97, naive_mae=7.05, wins=2)
+    horizon_meta["scored"][6] = _lead_record(6, model_mae=6.97, naive_mae=7.20, wins=2)
+    html = report._horizon_section(_fresh_metadata(horizon=horizon_meta))
+
+    assert "wins outright" not in html
+    assert "At hour 6 the model is ahead on average" in html
+
+
+def test_horizon_section_always_prints_the_row_the_served_note_quotes():
+    # The note quotes the crossover lead's figures and invites the reader to check them, so
+    # that row has to be on the page whatever lead the daily retrain lands on.
+    horizon_meta = _horizon(crossover=6)
+    horizon_meta["scored"][5] = _lead_record(5, model_mae=6.97, naive_mae=6.73, wins=2)
+    horizon_meta["leads"][5] = "naive"
+    horizon_meta["crossover_lead"] = 5
+    html = report._horizon_section(_fresh_metadata(horizon=horizon_meta))
+    assert "<td>+5 h</td>" in html
+
+
+def test_horizon_section_still_says_plainly_worse_when_that_is_what_happened():
+    horizon_meta = _horizon(crossover=3)
+    horizon_meta["scored"][3] = _lead_record(3, model_mae=6.97, naive_mae=5.51, wins=1)
+    html = report._horizon_section(_fresh_metadata(horizon=horizon_meta))
+    assert "measurably worse than repeating the" in html
+
+
+def test_horizon_section_says_so_plainly_when_the_model_wins_every_lead():
+    html = report._horizon_section(_fresh_metadata(horizon=_horizon(crossover=0)))
+    assert "beats the naive rule at every lead" in html
+    assert "For the first" not in html
+
+
+def test_horizon_section_shows_the_fold_tally_beside_the_paired_delta():
+    # The delta alone is the number the old rule would have published; the tally is what
+    # says whether it holds week to week, and both belong on the page together.
+    html = report._horizon_section(_fresh_metadata(horizon=_horizon()))
+    assert "0/5" in html
+    assert "5/5" in html
+    assert "Paired Δ" in html
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, _fresh_metadata(), _fresh_metadata(horizon={"scored": {1: _lead_record(1)}})],
+    ids=["no_metadata", "bundle_without_a_lead_axis", "single_lead"],
+)
+def test_horizon_section_renders_nothing_without_a_curve_to_draw(metadata):
+    assert report._horizon_section(metadata) == ""
+
+
 # --- Cross-cutting: nothing unusable ever reaches the page --------------------
 @pytest.mark.parametrize(
     "builder",
     [report._metrics_table, report._verdict, report._skill_line,
-     report._regime_section, report._backtest_section, report._glossary],
+     report._regime_section, report._backtest_section, report._horizon_section,
+     report._glossary],
     ids=["metrics_table", "verdict", "skill_line", "regime_section",
-         "backtest_section", "glossary"],
+         "backtest_section", "horizon_section", "glossary"],
 )
 @pytest.mark.parametrize(
     "metadata",
@@ -773,6 +934,21 @@ def test_render_page_stamps_the_moment_it_was_handed_not_the_wall_clock():
 def test_render_page_reports_the_peak_of_the_forecast_it_was_given():
     html = _page(_fresh_metadata(), forecast_df=_forecast_frame(peak=31.4))
     assert "31.4 µg/m³" in html
+
+
+def test_forecast_chart_marks_the_hours_the_model_did_not_answer():
+    # The chart claims 24 forecast hours. Where the naive rule serves some of them the plot
+    # has to show it — and since the marking lives inside the PNG rather than in the HTML,
+    # the only assertion that bites is that the drawn image actually changes.
+    plain = _forecast_frame().assign(lead=range(1, 25), source=["model"] * 24)
+    marked = plain.assign(source=["naive"] * 6 + ["model"] * 18)
+    assert charts.forecast(marked) != charts.forecast(plain)
+
+
+def test_forecast_chart_still_draws_a_frame_that_carries_no_source_column():
+    # `source` arrives from the serving policy; a caller assembling a frame by hand (the
+    # notebook, a test, an older path) must not hit an AttributeError for lacking it.
+    assert charts.forecast(_forecast_frame())
 
 
 def test_render_page_names_the_station_it_rendered():

@@ -24,8 +24,15 @@ from wroclaw_air_insights import config
 from wroclaw_air_insights.forecast import baseline, features
 
 MODEL_FILENAME = "pm25_forecaster.joblib"
+# Bundle layout version. Bumped when a bundle gains something a reader cannot do without
+# — schema 2 added the per-lead serving policy, which is measured, not derivable.
+BUNDLE_SCHEMA = 2
 # How many column names to name before the message stops being readable.
 _MISMATCH_PREVIEW = 6
+# Two predictors closer than this on a fold are tied, not separated. Anchored on the
+# precision the report publishes (two decimals of µg/m³): a difference the page cannot
+# display is not a difference it should count as a fold won.
+TIE_TOLERANCE = 0.01
 
 
 class FeatureMismatchError(RuntimeError):
@@ -34,6 +41,14 @@ class FeatureMismatchError(RuntimeError):
 
 class UnknownModelError(RuntimeError):
     """A model name that the candidate registry does not hold."""
+
+
+class UnknownBaselineError(RuntimeError):
+    """A baseline name that the naive-rule registry does not hold."""
+
+
+class BundleSchemaError(RuntimeError):
+    """A saved bundle written in a layout this version no longer reads."""
 
 
 def time_based_split(
@@ -452,7 +467,7 @@ def compare_models(
 
 
 def select_model(
-    features_df: pd.DataFrame, n_splits: int = 5, random_state: int = 42
+    features_df: pd.DataFrame, n_splits: int = config.CV_SPLITS, random_state: int = 42
 ) -> dict:
     """Pick the candidate with the lowest rolling-CV MAE, and show its rivals' scores.
 
@@ -474,10 +489,95 @@ def select_model(
     }
 
 
+def fold_indices(n_rows: int, n_splits: int = config.CV_SPLITS) -> list[np.ndarray]:
+    """Test-row positions for each rolling-origin fold, as one shared definition.
+
+    Every cross-validated figure on the page has to come from the same folds, or the
+    comparisons between them are not comparisons at all. This used to be two independent
+    ``TimeSeriesSplit`` objects that agreed by coincidence of matching arguments.
+    """
+    splitter = TimeSeriesSplit(n_splits=n_splits)
+    return [test_idx for _, test_idx in splitter.split(np.arange(n_rows))]
+
+
+def paired_delta(
+    reference_fold_mae: list[float],
+    model_fold_mae: list[float],
+    tolerance: float = TIE_TOLERANCE,
+) -> dict:
+    """The per-fold difference ``reference − model``: positive means the model is better.
+
+    This is the statistic that decides whether an improvement is real, and it is not the
+    same one as "is the gap bigger than the fold spread". The spread of MAE *levels* is
+    dominated by season and is common to every predictor scored on those folds, so testing
+    against it would call this project's own headline a null (8.61 − 6.97 = 1.64 sits well
+    inside ±2.55). What matters is whether the difference holds fold by fold: a delta that
+    changes sign across folds is noise regardless of how large its mean is.
+
+    A fold closer than ``tolerance`` is a **tie**, not a win. Counting a 0.003 µg/m³
+    separation as a full fold victory would be the same overclaim this rule exists to
+    prevent, one level down — and it is a real case here, not a hypothetical: gradient
+    boosting and Ridge land 0.003 apart on one fold, which is below the precision the page
+    even displays.
+    """
+    if len(reference_fold_mae) != len(model_fold_mae) or not reference_fold_mae:
+        raise ValueError(
+            "paired_delta needs one reference score per model score, from the same folds; "
+            f"got {len(reference_fold_mae)} and {len(model_fold_mae)}"
+        )
+    deltas = [float(r - m) for r, m in zip(reference_fold_mae, model_fold_mae)]
+    wins = sum(1 for d in deltas if d > tolerance)
+    losses = sum(1 for d in deltas if d < -tolerance)
+    return {
+        "per_fold": [round(d, 3) for d in deltas],
+        "mean": round(float(np.mean(deltas)), 3),
+        "std": round(float(np.std(deltas)), 3),
+        "n_folds": len(deltas),
+        "model_wins": wins,
+        "model_losses": losses,
+        "ties": len(deltas) - wins - losses,
+        # The narrowest fold, so a tally can always be read against how close it came to
+        # going the other way.
+        "smallest_margin": round(min(abs(d) for d in deltas), 3),
+        # No fold contradicting the direction is the strong form of the claim; a mixed sign
+        # is a null however comfortable the mean looks. Ties contradict nothing.
+        "consistent": losses == 0 or wins == 0,
+    }
+
+
+def cross_validate_predictions(
+    features_df: pd.DataFrame,
+    model_name: str,
+    n_splits: int = config.CV_SPLITS,
+    random_state: int = 42,
+) -> list[dict]:
+    """Per-fold held-out predictions, so several questions share one set of fits.
+
+    Returns ``{test_index, y_true, y_pred}`` per fold. Scoring a model per lead needs its
+    predictions row by row rather than a summary, and refitting once per lead would be 24
+    times the work for identical estimators — the model cannot see the lead.
+    """
+    x_all, y_all = features.split_xy(features_df)
+    model = candidate(model_name, random_state)
+
+    folds = []
+    splitter = TimeSeriesSplit(n_splits=n_splits)
+    for train_idx, test_idx in splitter.split(x_all):
+        model.fit(x_all.iloc[train_idx], y_all.iloc[train_idx])
+        folds.append(
+            {
+                "test_index": test_idx,
+                "y_true": y_all.iloc[test_idx].to_numpy(dtype=float),
+                "y_pred": np.asarray(model.predict(x_all.iloc[test_idx]), dtype=float),
+            }
+        )
+    return folds
+
+
 def cross_validate_baseline(
     features_df: pd.DataFrame,
     baseline_name: str = "baseline_persistence",
-    n_splits: int = 5,
+    n_splits: int = config.CV_SPLITS,
 ) -> dict:
     """Score a naive rule on the same rolling folds :func:`cross_validate` uses.
 
@@ -487,13 +587,16 @@ def cross_validate_baseline(
     an all-seasons error overstates the model: persistence is at its best in calm summer
     air, so the gap it leaves is widest exactly where the split does not look.
     """
+    if baseline_name not in _BASELINES:
+        raise UnknownBaselineError(
+            f"No baseline named {baseline_name!r}. Available: {', '.join(_BASELINES)}."
+        )
     predict_fn = _BASELINES[baseline_name]
-    x_all, y_all = features.split_xy(features_df)
-    splitter = TimeSeriesSplit(n_splits=n_splits)
+    _, y_all = features.split_xy(features_df)
 
     fold_mae = [
         float(mean_absolute_error(y_all.iloc[idx], predict_fn(features_df.iloc[idx])))
-        for _, idx in splitter.split(x_all)
+        for idx in fold_indices(len(features_df), n_splits)
     ]
     return {
         "baseline": baseline_name,
@@ -507,7 +610,7 @@ def cross_validate_baseline(
 def cross_validate(
     features_df: pd.DataFrame,
     model_name: str = "RandomForest",
-    n_splits: int = 5,
+    n_splits: int = config.CV_SPLITS,
     random_state: int = 42,
 ) -> dict:
     """Rolling-origin cross-validation (TimeSeriesSplit) for one model.
@@ -516,15 +619,12 @@ def cross_validate(
     every fold trains on the past and tests on the future. Returns per-fold MAE plus
     the mean/std.
     """
-    x_all, y_all = features.split_xy(features_df)
-    model = candidate(model_name, random_state)
-    splitter = TimeSeriesSplit(n_splits=n_splits)
-
-    fold_mae: list[float] = []
-    for train_idx, test_idx in splitter.split(x_all):
-        model.fit(x_all.iloc[train_idx], y_all.iloc[train_idx])
-        preds = model.predict(x_all.iloc[test_idx])
-        fold_mae.append(float(mean_absolute_error(y_all.iloc[test_idx], preds)))
+    fold_mae = [
+        float(mean_absolute_error(fold["y_true"], fold["y_pred"]))
+        for fold in cross_validate_predictions(
+            features_df, model_name, n_splits, random_state
+        )
+    ]
 
     return {
         "model": model_name,
@@ -541,16 +641,30 @@ def save_model(
     feature_names: list[str],
     metadata: dict | None = None,
     models_dir: Path = config.MODELS_DIR,
+    policy: dict | None = None,
 ) -> Path:
-    """Persist a trained model with its feature order and metadata (joblib).
+    """Persist a trained model with its feature order, serving policy and metadata (joblib).
 
     Saving ``feature_names`` matters: at inference the feature matrix must be built in
-    the exact same column order the model was trained on.
+    the exact same column order the model was trained on. ``policy`` carries the per-lead
+    serving decision — which lead times the model answers and which ones the naive rule
+    answers — because that decision is measured at training time and must not be
+    re-derived, or guessed at, in the serving path.
+
+    This is the authoritative copy. ``metadata["horizon"]`` holds the same dict for readers
+    that take only the metadata — the report does — and neither may be written without the
+    other.
     """
     models_dir.mkdir(parents=True, exist_ok=True)
     path = models_dir / MODEL_FILENAME
     joblib.dump(
-        {"model": model, "feature_names": list(feature_names), "metadata": metadata or {}},
+        {
+            "schema": BUNDLE_SCHEMA,
+            "model": model,
+            "feature_names": list(feature_names),
+            "policy": policy or {},
+            "metadata": metadata or {},
+        },
         path,
     )
     return path
@@ -589,8 +703,25 @@ def align_features(frame: pd.DataFrame, feature_names: list[str]) -> pd.DataFram
 
 
 def load_model(models_dir: Path = config.MODELS_DIR) -> dict:
-    """Load a persisted model bundle (``model``, ``feature_names``, ``metadata``)."""
+    """Load a persisted bundle (``schema``, ``model``, ``feature_names``, ``policy``, ``metadata``).
+
+    A bundle without the current schema is refused rather than read half-heartedly. The
+    per-lead serving policy is not something a reader can reconstruct from an older bundle —
+    it is measured during training — so a compatibility path would have to invent one, and
+    the page would then publish a lead breakdown that no measurement stands behind. The
+    daily job retrains before it reports, so it heals itself in a single run.
+    """
     path = models_dir / MODEL_FILENAME
     if not path.exists():
         raise FileNotFoundError(f"No saved model at {path} — train first")
-    return joblib.load(path)
+
+    bundle = joblib.load(path)
+    schema = bundle.get("schema") if isinstance(bundle, dict) else None
+    if schema != BUNDLE_SCHEMA:
+        raise BundleSchemaError(
+            f"The bundle at {path} is schema {schema!r}, but this version reads "
+            f"{BUNDLE_SCHEMA}. It predates the per-lead serving policy, which is measured "
+            f"at training time and cannot be reconstructed from a saved model — retrain "
+            f"with `python -m wroclaw_air_insights.pipeline train`."
+        )
+    return bundle
