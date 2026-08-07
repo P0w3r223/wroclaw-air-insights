@@ -113,9 +113,14 @@ def _backtest_section(metadata: dict) -> str:
     if not chart:
         return ""
 
-    days = backtest.get("days")
-    span = f"{days} days" if isinstance(days, int) else "the final stretch"
-    hours = len(backtest["timestamps"])
+    # Headline the span the data actually covers, not the span that was requested: a test
+    # window shorter than BACKTEST_WINDOW_DAYS would otherwise be announced as 14 days.
+    stamps = backtest["timestamps"]
+    covered = (
+        datetime.fromisoformat(stamps[-1]) - datetime.fromisoformat(stamps[0])
+    ).days
+    span = f"{covered} days" if covered >= 2 else ("day" if covered == 1 else "hours")
+    hours = len(stamps)
     return f"""  <h3>The last {span} of the test window, hour by hour</h3>
   <img src="data:image/png;base64,{chart}" alt="Forecast against measured PM2.5">
   <p class="hint">{hours:,} hours the model had never seen. These come from the
@@ -181,6 +186,14 @@ def _metrics_table(metadata: dict) -> str:
         if window.get("start") and window.get("end")
         else ""
     )
+    # A bundle saved before the reference rows existed renders the model alone, and the
+    # caption must not then announce three predictors that are not on the page.
+    predictors = rows.count("<tr")
+    scope = (
+        f"All {predictors} are scored on the same held-out window{when}."
+        if predictors > 1
+        else f"Scored on the held-out window{when}."
+    )
     return f"""  <table class="metrics">
     <thead>
       <tr><th>Predictor</th><th>MAE ↓</th><th>RMSE ↓</th><th>R² ↑</th><th>Bias →0</th></tr>
@@ -188,7 +201,7 @@ def _metrics_table(metadata: dict) -> str:
     <tbody>
 {rows}    </tbody>
   </table>
-  <p class="hint">All three scored on the same held-out window{when}.
+  <p class="hint">{scope}
   MAE, RMSE and bias are in µg/m³ (↓ lower is better); R² is a ratio (↑ higher is better).
   Bias is the <em>signed</em> average error — positive means the forecast runs high — and
   it is the one column where zero, not lower, is the target.</p>"""
@@ -308,7 +321,9 @@ def _regime_section(metadata: dict) -> str:
     if not clean.get("n") and not elevated.get("n"):
         return ""
 
-    threshold = _number(regime.get("threshold")) or config.PM25_WHO_DAILY
+    # `or` would swallow a stored 0.0 and silently relabel the table with the WHO level.
+    stored_threshold = _number(regime.get("threshold"))
+    threshold = config.PM25_WHO_DAILY if stored_threshold is None else stored_threshold
     rows = _regime_row(
         f"Below {threshold:.0f} µg/m³", clean, (naive.get("clean") or {})
     ) + _regime_row(

@@ -4,11 +4,14 @@ The leakage tests are the important ones: they pin down that features only ever 
 into the past, which is the methodological point of the whole project.
 """
 
+from pathlib import Path
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from wroclaw_air_insights import config
+from wroclaw_air_insights import config, pipeline
 from wroclaw_air_insights.forecast import baseline, features, model
 
 _ORIGIN = pd.Timestamp("2026-01-01")
@@ -432,6 +435,88 @@ def test_group_importances_fall_back_to_the_flat_line_when_a_group_is_everything
         frame, "Ridge", groups={"everything": all_columns}, n_repeats=2
     )
     assert result["groups"]["everything"]["retrained_delta"] > 0
+
+
+# --- The bundle's feature contract -------------------------------------------
+def test_align_features_selects_the_training_order_not_the_builders():
+    frame = pd.DataFrame({"timestamp": [1], "target": [2.0], "b": [3.0], "a": [4.0]})
+    aligned = model.align_features(frame, ["a", "b"])
+    assert list(aligned.columns) == ["a", "b"]
+
+
+def test_align_features_explains_a_stale_bundle_instead_of_raising_a_key_error():
+    # Without this, a feature change surfaces as a bare pandas KeyError from inside the
+    # serving path — and the same call builds the published report.
+    frame = pd.DataFrame({"timestamp": [1], "target": [2.0], "wind_u": [1.0]})
+    with pytest.raises(model.FeatureMismatchError) as excinfo:
+        model.align_features(frame, ["wind_direction_10m"])
+
+    message = str(excinfo.value)
+    assert "wind_direction_10m" in message      # what the model wanted
+    assert "wind_u" in message                  # what it got instead
+    assert "pipeline train" in message          # what to do about it
+    assert "target" not in message              # the target is not a feature
+    assert not isinstance(excinfo.value, KeyError)
+
+
+def test_align_features_truncates_a_long_list_of_missing_columns():
+    frame = pd.DataFrame({"timestamp": [1]})
+    with pytest.raises(model.FeatureMismatchError) as excinfo:
+        model.align_features(frame, [f"feature_{i}" for i in range(10)])
+    assert "+4 more" in str(excinfo.value)
+
+
+def test_candidate_names_the_registry_instead_of_echoing_the_missing_key():
+    # The name can come from a saved bundle, so dropping a candidate from the registry
+    # breaks every command that reads a bundle written before the removal.
+    with pytest.raises(model.UnknownModelError) as excinfo:
+        model.candidate("GradientBoosting")
+
+    message = str(excinfo.value)
+    assert "GradientBoosting" in message
+    for offered in model.build_models():
+        assert offered in message
+    assert "pipeline train" in message
+
+
+def test_candidate_explains_a_registry_that_dropped_the_saved_model():
+    # The motivating path: `pipeline importance` measures whatever model the SAVED BUNDLE
+    # names, so dropping a candidate must fail with an explanation, not a KeyError.
+    surviving = {"Ridge": model.build_models()["Ridge"]}
+    with patch.object(model, "build_models", return_value=surviving):
+        with pytest.raises(model.UnknownModelError) as excinfo:
+            model.candidate("RandomForest")
+
+    message = str(excinfo.value)
+    assert "RandomForest" in message
+    assert "Ridge" in message
+
+
+def test_the_pipeline_reaches_the_registry_through_the_guard():
+    # Guards the fix itself: the first version of candidate() left pipeline.importance
+    # indexing build_models() directly, so the very path it was written for stayed broken.
+    source = Path(pipeline.__file__).read_text(encoding="utf-8")
+    assert "model.build_models()[" not in source
+    assert "model.candidate(" in source
+
+
+def test_candidate_returns_a_fresh_estimator_each_time():
+    # group_importances refits the same name repeatedly; a shared instance would carry
+    # one group's fit into the next measurement.
+    first, second = model.candidate("Ridge"), model.candidate("Ridge")
+    assert first is not second
+
+
+def test_train_forecaster_uses_the_registry_hyperparameters():
+    # One definition of the forest, so the notebook's model and the deployable candidate
+    # cannot drift apart.
+    pm25, weather = _make_data()
+    frame = features.build_features(pm25, weather)
+    x, y = features.split_xy(frame)
+    trained = model.train_forecaster(x, y)
+    registry = model.build_models()["RandomForest"]
+    assert trained.get_params()["n_estimators"] == registry.get_params()["n_estimators"]
+    assert trained.get_params()["min_samples_leaf"] == registry.get_params()["min_samples_leaf"]
 
 
 def test_save_load_model_roundtrip(tmp_path):
