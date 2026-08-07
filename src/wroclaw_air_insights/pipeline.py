@@ -17,13 +17,16 @@ import argparse
 import json
 import sys
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from wroclaw_air_insights import clean, config, db
 from wroclaw_air_insights.forecast import ab as ab_harness
-from wroclaw_air_insights.forecast import features, horizon, model, serving, specialists
+from wroclaw_air_insights.forecast import (
+    features, horizon, model, prospective, serving, specialists,
+)
 from wroclaw_air_insights.ingest import gios, weather
 
 _MAX_ARCHIVAL_DAYS = 366
@@ -420,6 +423,47 @@ def specialist_scan(
     return result
 
 
+def score_log(log_path: Path, station_id: int = config.PRIMARY_STATION_ID) -> dict:
+    """Grade the published forecast log against the observations that have since arrived.
+
+    The only genuinely out-of-sample number this project can produce. Every other accuracy
+    figure it publishes is retrospective: cross-validation refits on a window that slides daily
+    and scores hours that had already happened when the fit was made. These rows were published
+    before the outcome existed.
+
+    Scored from the observations *currently* stored, so a GIOŚ revision changes a past grade
+    rather than being frozen at first sight. That is the right direction — the log records what
+    was forecast, the database records what is now believed to have happened — but it means a
+    figure quoted from this command is a figure as of today.
+    """
+    rows = prospective.read_log(log_path)
+    if not rows:
+        print(f"[score-log] {log_path} holds no forecasts yet — nothing to grade")
+        return {"scored_rows": 0, "pending_rows": 0, "period": None,
+                "by_lead": {}, "by_source": {}}
+
+    conn = db.connect()
+    try:
+        pm25 = db.read_pm25(conn, station_id)
+    finally:
+        conn.close()
+
+    summary = prospective.prospective_summary(prospective.score_log(rows, pm25))
+    period = summary["period"]
+    print(f"[score-log] {len(rows)} logged forecasts, {summary['scored_rows']} graded, "
+          f"{summary['pending_rows']} awaiting their hour"
+          + (f" — {period['from']} to {period['to']}" if period else ""))
+    if summary["by_source"]:
+        # The prospective test of the serving policy: the folds decided where the naive rule
+        # stops earning its hours, and these are hours nobody had seen when they decided.
+        print("[score-log] by predictor (the crossover policy, graded out of sample):")
+        print(json.dumps(summary["by_source"], indent=2))
+    if summary["by_lead"]:
+        print("[score-log] by lead:")
+        print(json.dumps(summary["by_lead"], indent=2))
+    return summary
+
+
 def predict(station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Forecast PM2.5 for the next 24h (training + saving a model first if none exists)."""
     try:
@@ -477,6 +521,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--model", dest="model_name", default=None,
         help="candidate to measure (default: whatever the saved bundle deployed)",
     )
+    score_cmd = sub.add_parser(
+        "score-log", help="grade the published forecast log against what actually happened"
+    )
+    score_cmd.add_argument(
+        "--log", dest="log_path", type=Path,
+        default=config.PROJECT_ROOT / prospective.LOG_FILENAME,
+        help="path to the JSONL forecast log",
+    )
     sub.add_parser("predict", help="forecast PM2.5 for the next 24h (live)")
     all_cmd = sub.add_parser("all", help="ingest then train")
     all_cmd.add_argument("--days", type=int, default=365)
@@ -502,6 +554,9 @@ def main(argv: list[str] | None = None) -> None:
         ab(experiment=args.experiment, model_names=args.model_names)
     elif args.command == "specialists":
         specialist_scan(model_name=args.model_name)
+
+    elif args.command == "score-log":
+        score_log(args.log_path)
     elif args.command == "predict":
         predict()
     elif args.command == "all":

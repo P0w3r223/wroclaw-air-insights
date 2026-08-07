@@ -234,9 +234,11 @@ and weather correlations — is in
 ```
 src/wroclaw_air_insights/
   config.py  clean.py  db.py  pipeline.py
-  report.py  charts.py  formatting.py  horizon_section.py  rejected_section.py  # page
+  report.py  charts.py  formatting.py                       # page composition
+  horizon_section.py  regime_section.py  rejected_section.py  # its longer sections
   ingest/    gios.py  weather.py
-  forecast/  features.py  baseline.py  model.py  horizon.py  serving.py  ab.py  specialists.py
+  forecast/  features.py  baseline.py  model.py  horizon.py  serving.py
+             ab.py  specialists.py  prospective.py        # measurement + the forecast log
 notebooks/                  # 01_analysis.ipynb — EDA + figures
 tests/                      # pytest — cleaning, parsing, db, forecast, horizon, report
 docs/ideas/                 # roadmap: measured results, including the rejected ones
@@ -267,6 +269,7 @@ python -m wroclaw_air_insights.pipeline compare    # baselines vs models + rolli
 python -m wroclaw_air_insights.pipeline importance # what each source of data is worth
 python -m wroclaw_air_insights.pipeline ab         # score a feature idea, paired fold by fold
 python -m wroclaw_air_insights.pipeline specialists # phase 1: a predictor per lead, and its gate
+python -m wroclaw_air_insights.pipeline score-log  # grade past forecasts against what happened
 python -m wroclaw_air_insights.pipeline predict    # live next-24h PM2.5 forecast
 python -m wroclaw_air_insights.report              # build the HTML report
 

@@ -659,13 +659,46 @@ therefore not obviously the right one — see the entry itself.
 
 ### Later
 
-7. **Prospective forecast log,** not "metrics over time". The original framing was both
-   under-costed and methodologically weak: `refresh.yml` has `contents: read`, gitignores
-   `models/` and `*.db`, and re-ingests from scratch, so there is nowhere to append; and
-   because the training window slides daily, "MAE over time" would track window composition
-   rather than model health. Persist each day's *published* forecast and score it when the
-   observations arrive. That is genuine prospective evaluation and it makes item 3 real
-   rather than retrospective. Cost M, not S.
+7. **Prospective forecast log — shipped.** Not "metrics over time": the original framing was
+   both under-costed and methodologically weak, because the training window slides daily, so
+   "MAE over time" would track window composition rather than model health. A hard month would
+   read as a worse model. What is reported instead is per-lead error over a *named* period, and
+   the split by which predictor answered the hour.
+
+   `forecast/prospective.py` + `pipeline score-log`. The blocker the entry named was real —
+   `refresh.yml` had `contents: read` and re-ingests from scratch, so there was nowhere to
+   append. It now writes to an append-only `forecast-log` data branch, checked out into
+   `.forecast-log/` and never merged into main, where a daily commit would bury the code
+   history.
+
+   Three decisions worth recording:
+
+   - **The log records the frame the page was built from, not a re-prediction.** Re-running the
+     predictor for the log would usually agree and occasionally not — a new observation moves
+     the origin — and the log would then grade a forecast nobody saw. Logging is a parameter of
+     `generate_report`, so page and log come from one object.
+   - **Keyed on `(station, origin, lead)`, not on the wall clock.** A workflow re-run publishes
+     the same forecast from the same origin; keying on `issued_at` would let a re-run
+     double-weight that day in every figure the log ever produces. The `pages` concurrency
+     group is also what makes the push safe without retry machinery — two refresh runs cannot
+     overlap, and a run cancelled mid-push is recovered by the next one *because* appending is
+     idempotent rather than additive.
+   - **`source` is logged per row, which is the point.** The crossover was chosen on folds;
+     the per-source split says whether it survives contact with hours nobody had seen when it
+     was chosen. That is a test cross-validation structurally cannot run.
+
+   *One thing it does not claim.* Logging happens in the build job and the deploy is separate,
+   so a failed deploy leaves a logged forecast that never reached a reader. That does not
+   weaken the evaluation: what out-of-sample scoring rests on is that the forecast was fixed
+   **before the outcome existed**, not that a web server served it — and the docstring says so
+   rather than claiming the stronger thing.
+
+   Grading reads the observations *currently* stored, so a GIOŚ revision moves a past grade
+   instead of being frozen at first sight. Right direction — the log records what was forecast,
+   the database what is now believed to have happened — but it means any figure quoted from
+   this command is a figure as of today. Next: the page can carry it once there is enough of a
+   record to be worth reading, which is the thing that makes item 3 prospective rather than
+   retrospective.
 
 8. **Health context** — translate µg/m³ into what it means for a runner or someone with
    asthma. Low technical signal, real product signal.
