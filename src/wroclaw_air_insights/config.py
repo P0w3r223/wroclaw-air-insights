@@ -145,3 +145,21 @@ REPORT_LEAD_ROWS: tuple[int, ...] = (3, 6, 12)
 # How much of the held-out window the report charts as a backtest. Long enough to show
 # several daily cycles, short enough that hourly points stay readable.
 BACKTEST_WINDOW_DAYS = 14
+
+# When the reading a forecast is anchored on stops deserving the word "current".
+#
+# The serving policy republishes the observation at the origin verbatim for the early leads,
+# and the page calls it "the reading at the moment the forecast is issued". GIOŚ publishes
+# hourly with a short lag, so a couple of hours is normal; beyond this the phrase is claiming
+# a currency the data does not have. The page states the age either way — this threshold only
+# decides how plainly it says the reading is old, which is why the exact value is not load
+# bearing.
+STALE_ORIGIN_HOURS = 3
+
+# When a gap stops having an innocent explanation. Between STALE_ORIGIN_HOURS and this, the
+# page reports the age and says the earliest hours are no longer current — an observation it
+# can support. Past a full day there is no publishing delay that accounts for it, so the page
+# is allowed to say the station has stopped reporting. Two thresholds because they answer two
+# different questions, and stating a diagnosis off the first one would be a claim the data
+# does not carry.
+STATION_OUTAGE_HOURS = 24

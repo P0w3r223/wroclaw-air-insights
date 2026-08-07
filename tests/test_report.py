@@ -804,20 +804,20 @@ def test_horizon_section_renders_nothing_without_a_curve_to_draw(metadata):
     "builder",
     [report._metrics_table, report._verdict, report._skill_line,
      report._regime_section, report._backtest_section, report._horizon_section,
-     report._glossary],
+     report._rejected_section, report._glossary],
     ids=["metrics_table", "verdict", "skill_line", "regime_section",
-         "backtest_section", "horizon_section", "glossary"],
+         "backtest_section", "horizon_section", "rejected_section", "glossary"],
 )
 @pytest.mark.parametrize(
     "metadata",
     [{}, _NAN_METADATA, _LEGACY_METADATA],
     ids=["empty", "all_nan", "legacy_bundle"],
 )
-def test_sections_never_leak_nan_or_none_onto_the_page(builder, metadata):
-    html = builder(metadata)
-    assert "nan" not in html
-    assert "None" not in html
-    assert "inf" not in html
+def test_sections_never_leak_nan_or_none_onto_the_page(builder, metadata, leaks):
+    """Every section builder, not all but one — a section outside this net is the one that
+    can regress unnoticed. Word-boundary matched for the reason `conftest` documents."""
+    leaked = leaks(builder(metadata))
+    assert not leaked, f"float repr reached the page: {sorted(set(leaked))}"
 
 
 # --- Contract with forecast.model --------------------------------------------
@@ -985,11 +985,10 @@ def test_render_page_falls_back_to_grey_for_a_category_the_palette_never_saw():
     [{}, _NAN_METADATA, _LEGACY_METADATA],
     ids=["empty", "all_nan", "legacy_bundle"],
 )
-def test_render_page_never_leaks_nan_or_none_onto_the_public_page(metadata):
-    prose = _prose_only(_page(metadata))
-    assert "nan" not in prose
-    assert "None" not in prose
-    assert "inf" not in prose
+def test_render_page_never_leaks_nan_or_none_onto_the_public_page(metadata, leaks):
+    """What leaks is a float repr — a standalone `nan`, `inf`, `-inf` or `None` token."""
+    leaked = leaks(_prose_only(_page(metadata)))
+    assert not leaked, f"float repr reached the page: {sorted(set(leaked))}"
 
 
 @pytest.mark.parametrize(

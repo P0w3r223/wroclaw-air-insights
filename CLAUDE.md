@@ -50,9 +50,14 @@ These override convenience. Each one exists because the project already got it w
 - **Missing data is real.** Station readings have gaps — handle them, don't assume continuity.
 - **Train and serve from the same distribution.** Training weather comes from Open-Meteo's
   Historical Forecast API, the same models the live Forecast API runs.
-- **No sentence on the published page may be contradicted by a number beside it.** Derive prose
-  from the data it describes rather than templating it off a threshold; this has been the
-  source of every defect a review has caught on the report.
+- **No sentence in a published artefact may be contradicted by a number beside it — or by the
+  live page.** Derive prose from the data it describes rather than templating it off a
+  threshold; this has been the source of every defect a review has caught on the report. The
+  rule covers README too: the pipeline retrains daily, so a figure that describes the *current*
+  system goes stale on the next run. Quote such figures only as a dated record of one run, and
+  leave the current answer to the page. A *decision* that can move with the data (which lead
+  the crossover falls on, which model deploys) is never asserted as a number outside the code
+  that recomputes it — describe the rule that places it instead.
 
 ## Conventions
 

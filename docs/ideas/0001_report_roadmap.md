@@ -88,12 +88,20 @@ it, the ranking itself was re-measured. It did not survive, and neither did the 
 | B — u/v components (`speed × sin/cos`) | 8.26 | 7.06 | 7.18 |
 | C — `sin/cos` of direction + speed | 8.09 | 7.03 | 7.19 |
 
-Every difference is ≤ 0.09 µg/m³ against a fold-to-fold spread of ±2.5. The physically
+Every difference is ≤ 0.10 µg/m³ against a fold-to-fold spread of ±2.5. The physically
 correct encoding is not measurably better, and for the deployed model it is marginally
 worse. Even Ridge — the one candidate that genuinely *cannot* use a raw bearing, and so
 should have gained the most — got **worse** under u/v. The discontinuity at north is real
 and costs a gradient-boosted tree essentially nothing: it can already carve the circle with
 a second split.
+
+*(Correction, on re-checking this table for the published page: the bound above read ≤ 0.09,
+which the table refutes — Ridge under sin/cos moves 8.19 → 8.09, a full 0.10, and it is the
+largest single effect here. It is also the one movement in the **helpful** direction, on
+exactly the candidate the physical argument predicted would gain, which is why the scope
+"worse **under u/v**" matters and a blanket "got worse" would be false. The conclusion is
+unchanged — 0.10 against ±2.5 is still a null — but the number was wrong in the record and
+had been copied into the README from here.)*
 
 **Rejected.** Not deferred — measured, and it does not pay.
 
