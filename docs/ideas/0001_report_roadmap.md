@@ -164,10 +164,17 @@ scoring, because a variant that adds a column can lose hours to `dropna` and wou
 be graded on an easier set), **identical folds**, and reports the paired difference per
 candidate estimator. Reproduction check against the tables above: **14 of the 15 published
 cells come back within 0.01 µg/m³**, including every linear one. The exception is
-`HistGradientBoosting` under u/v — 6.982 here against the published 7.06. Both estimators are
-seeded, so the seed is not the difference; what is not fixed is column *order*, which the
-original scratch script did not record and which a histogram-binned tree is mildly sensitive
-to. No verdict turns on it — that cell is a null either way.
+`HistGradientBoosting` under u/v — 6.982 here against the published 7.06.
+
+*What accounts for that 0.078, measured rather than asserted.* The first draft of this entry
+blamed column order: the original scratch script did not record it and a histogram-binned tree
+is mildly sensitive to it. Measured over 12 random permutations of that exact frame, the cell
+spans 6.982–7.016 — **0.034, well under half the gap** — and the alternative variant shape
+(dropping wind speed) puts it at 7.109, so that is not it either. Column order is part of the
+answer and not the whole of it; the likeliest remainder is a different scikit-learn/numpy
+version in the original script, which is not recoverable. Stated as far as it was checked,
+because asserting a cause a quick check only half-supports is the failure mode this project's
+own rule targets. No verdict turns on it — that cell is a null under either figure.
 
 *One reconstruction detail was load bearing and nearly got it wrong.* "u/v components" reads
 naturally as *replacing* speed and direction, since u and v carry the magnitude between them.
@@ -183,8 +190,14 @@ CV MAE µg/m³ and the paired verdict, 8 584 rows, 5 folds, same window as above
 | wind | raw *(reference)* | 8.189 | **6.966** | 7.182 |
 | wind | u/v | 8.260 · null | 6.982 · null | 7.173 · null |
 | wind | sin/cos | **8.092 · improvement** | 7.030 · null | 7.189 · null |
+| pollutants | current *(reference)* | 8.189 | **6.966** | 7.182 |
 | pollutants | + NO2/CO lag 24 | 8.151 · null | 6.984 · null | **7.137 · improvement** |
 | pollutants | + NO2/CO full history | 8.535 · null | 6.985 · null | 7.123 · null |
+
+The two reference rows are identical here, and that is a fact about this station rather than a
+duplicated row: NO2 and CO have full coverage, so adding them drops no hours and both
+experiments intersect to the same 8 584. A pollutant with gaps would separate them, which is
+why `align_variants` intersects per experiment instead of assuming one shared row set.
 
 **Both shipped decisions are unchanged.** Nothing wins consistently for the deployed model in
 either experiment — the folds disagree in both directions on all four of its variants. The
@@ -197,21 +210,39 @@ fold that separates them, and neither is the deployed model:
   candidate the physical argument named *in advance* — the one that structurally cannot read a
   bearing. The old write-up already noticed the movement ("the largest single effect here, and
   it is in the helpful direction, on exactly the candidate the physical argument predicted
-  would gain") and then dismissed it with the retracted test. Under the paired rule it is a
-  real effect on a candidate trailing the deployed model by 1.13 µg/m³, so it changes no
-  decision — but "the discontinuity costs nothing" was too strong. It costs the linear model
-  something, consistently, and only the linear model.
-- **NO2/CO at lag 24 on RandomForest: +0.044 µg/m³, better on 5 folds of 5.** Fully consistent
-  and worth four hundredths, on a candidate that has never won a selection.
+  would gain") and then dismissed it with the retracted test. Under the paired rule it clears
+  the bar — on a candidate trailing the deployed model by 1.13 µg/m³, so it changes no decision
+  either way. What it does refute is the blanket wording: "the discontinuity costs nothing" was
+  too strong. It plausibly costs the linear model something, and only the linear model.
 
-**The multiplicity caveat, which the harness now reports rather than leaving to memory.** The
-verdict rule asks that no fold contradict the direction; under a change that does nothing each
-fold's sign is a coin flip, so a clean sweep is a **1-in-16** event at five folds. This run made
-**twelve** comparisons, which is expected to manufacture ~0.75 sweeps from noise alone — and it
-found two. That is not evidence of nothing, but it is not two findings either. The honest way to
-separate them is what was predicted beforehand: the Ridge result was named in advance by a
-physical argument, the RandomForest result by nothing at all. `ab.expected_by_chance` prints
-this beside every table so the next reader does not have to remember it.
+  *How much this can carry on its own: not much.* Four wins, one tie, none against is a sign
+  test at p ≈ 0.06 before any multiplicity adjustment — about the most five folds are able to
+  show. The claim worth making is the scoped one (*who* it affects), not a quantified gain.
+- **NO2/CO at lag 24 on RandomForest: +0.044 µg/m³, better on 5 folds of 5.** No fold against,
+  worth four hundredths, on a candidate that has never won a selection — and predicted by
+  nothing in advance. See the multiplicity note below: this is the one that reads as noise.
+
+**The multiplicity caveat, and the first version of it was wrong in the flattering direction.**
+The verdict rule asks that no fold *contradict* the direction; under a change that does nothing
+and never ties, each fold's sign is a coin flip and a clean sweep is a **1-in-16** event at five
+folds. Twelve comparisons then expect 0.75 sweeps from noise, "and it found two" — which is how
+this entry originally read, and it made the two survivors look like more than chance provides.
+
+**Ties raise the sweep rate, they do not lower it,** because a tie is not a contradiction: it
+removes a chance to fail. With per-fold tie probability `t` the rate is
+`2 · (((1+t)/2)^n − t^n)`, above `2/2^n` for every `t > 0`. This run tied **8 of its 60 folds**,
+so the rate is 0.117 per comparison and twelve comparisons expect **~1.4** sweeps. It found two.
+Verified analytically and by simulation (0.1164 against 0.1168 predicted), and it is still a
+*floor*: rolling-origin folds share training rows, so their signs are positively correlated,
+which pushes it higher again.
+
+So the count of survivors is what chance gives, and neither result is evidence on its own. The
+only thing that separates them is what was predicted beforehand — the Ridge result was named in
+advance by a physical argument, the RandomForest result by nothing at all — and even the Ridge
+one is 4 of 5 with a tie, about the most five folds can show. `ab.expected_by_chance` takes the
+run's own tie rate and `pipeline ab` prints a run-level line after the last table, because a
+reader picking a survivor is choosing from every comparison the run made, not from one table's
+six.
 
 **One consequence for the methodology, and it argues against a change rather than for one.**
 The A/B verdict rule is deliberately *stricter* than the serving policy's: `horizon` hands a

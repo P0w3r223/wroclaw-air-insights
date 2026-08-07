@@ -212,12 +212,16 @@ where it matters and sharpens where it does not:
 
 - for the **deployed** model, no encoding wins consistently — whichever way the mean leans,
   some folds go the other way;
-- the **linear** candidate does gain 0.10 µg/m³ under sin/cos, on every fold that separates
-  the two. Exactly the candidate the physical argument named in advance, and it trails the
-  deployed model by more than a full µg/m³, so the gain has nowhere to land.
+- the **linear** candidate comes out ahead by 0.10 µg/m³ under sin/cos in 4 folds of 5, the
+  fifth tied and none against. Exactly the candidate the physical argument named in advance —
+  and it trails the deployed model by more than a full µg/m³, so the gain has nowhere to land.
 
-So the shipped decision is unchanged and the blanket wording was wrong: the physical argument
-was right about *who* would benefit. Full record in
+**How much weight that second point carries: little, on its own.** Four of five with a tie is
+a sign test at p ≈ 0.06 before any adjustment, and the full run made 12 comparisons of which
+~1.4 sign-consistent results are expected from noise alone — it found 2. So the shipped
+decision is unchanged, and what the re-measurement actually refutes is the *blanket* wording:
+the physical argument was right about **who** would benefit, and "the discontinuity costs
+nothing" was too strong. Full record in
 [`docs/ideas/0001_report_roadmap.md`](docs/ideas/0001_report_roadmap.md); the numbers above are
 a dated record of one run, re-runnable with `pipeline ab`.
 

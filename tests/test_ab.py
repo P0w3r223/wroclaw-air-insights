@@ -79,6 +79,23 @@ def test_comparing_against_a_variant_that_is_not_there_names_what_is():
         ab.compare_variants({"a": _frame(pm25, weather)}, reference="missing")
 
 
+def test_variants_that_share_no_hours_say_so_instead_of_failing_later():
+    # Otherwise the empty frames pass every alignment check and the failure surfaces from
+    # inside cross_validate, naming nothing about why there was nothing to fit.
+    pm25, weather = _series()
+    base = _frame(pm25, weather)
+    with pytest.raises(ValueError, match="share no hours"):
+        ab.align_variants(
+            {"early": base.iloc[:100], "late": base.iloc[100:].reset_index(drop=True)}
+        )
+
+
+def test_a_weather_frame_without_wind_names_the_experiment_it_blocks():
+    pm25, weather = _series()
+    with pytest.raises(ValueError, match="wind_direction_10m"):
+        ab.wind_encoding_variants(pm25, weather.drop(columns=["wind_direction_10m"]))
+
+
 # --- the verdict rule ---------------------------------------------------------
 def _delta(per_fold: list[float]) -> dict:
     """A paired delta with the given per-fold differences (positive = challenger better)."""
@@ -126,14 +143,52 @@ def test_a_sign_consistent_sweep_is_one_comparison_in_sixteen_at_five_folds():
     assert ab.expected_by_chance(12, 5) == pytest.approx(0.75)
 
 
-def test_the_comparison_count_travels_with_the_verdicts():
+def test_ties_raise_the_chance_of_a_sweep_rather_than_lowering_it():
+    """The direction this got wrong once, so it is pinned rather than described.
+
+    A tie is not a contradiction, so a tied fold cannot break a sweep — it removes a chance to
+    fail. Believing the opposite makes survivors look like more than noise provides, which is
+    the flattering direction and therefore the one worth a test.
+    """
+    tieless = ab.expected_by_chance(12, 5, 0.0)
+    assert ab.expected_by_chance(12, 5, 0.13) > tieless
+    assert ab.expected_by_chance(12, 5, 0.30) > ab.expected_by_chance(12, 5, 0.13)
+    # But not without limit, and the endpoint is what ties the formula to the rule it models:
+    # with every fold tied there is no direction to be consistent about, and `verdict` returns
+    # a null because `model_wins` is zero. The `- t**n` term is exactly that exclusion.
+    assert ab.expected_by_chance(1, 5, 1.0) == 0.0
+    assert ab.verdict(_delta([0.0] * 5)) == ab.NULL
+
+
+def test_the_chance_rate_matches_a_simulation_of_the_rule_it_describes():
+    """Derived formula against the verdict rule actually applied, at the project's tie rate."""
+    import random
+
+    n_folds, tie_rate, trials = 5, 8 / 60, 200_000
+    rng = random.Random(0)
+    weights = [(1 - tie_rate) / 2, (1 - tie_rate) / 2, tie_rate]
+    sweeps = 0
+    for _ in range(trials):
+        signs = rng.choices(["+", "-", "0"], weights, k=n_folds)
+        wins, losses = signs.count("+"), signs.count("-")
+        if bool(wins) != bool(losses):
+            sweeps += 1
+    assert ab.expected_by_chance(1, n_folds, tie_rate) == pytest.approx(
+        sweeps / trials, abs=0.005
+    )
+
+
+def test_the_comparison_count_and_the_tie_count_travel_with_the_verdicts():
     pm25, weather = _series()
     variants = ab.wind_encoding_variants(pm25, weather)
     result = ab.compare_variants(variants, "raw", model_names=["Ridge"], n_splits=3)
 
     # One estimator against two challengers: the reference is not compared with itself.
     assert result["n_comparisons"] == 2
-    assert result["expected_by_chance"] == ab.expected_by_chance(2, 3)
+    assert result["scored_folds"] == 2 * 3
+    assert result["expected_by_chance"] == ab.expected_by_chance(
+        2, 3, result["tied_folds"] / result["scored_folds"]
+    )
 
 
 # --- the two published nulls, as variants -------------------------------------
