@@ -1,5 +1,7 @@
 """Tests for the live serving path (network + model mocked)."""
 
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
 
@@ -16,12 +18,12 @@ def _serving_fixture(monkeypatch, policy=None):
     """Wire the serving path to local data: no network, no saved bundle, no estimator."""
     policy = policy or {}
     origin = pd.Timestamp("2026-07-01 12:00")
-    hist_index = pd.date_range(origin - pd.Timedelta(days=10), origin, freq="h")
+    hist_index = pd.date_range(origin - timedelta(days=10), origin, freq="h")
     pm25 = pd.DataFrame(
         {"timestamp": hist_index, "value": np.arange(len(hist_index), dtype=float)}
     )
     wx_index = pd.date_range(
-        origin - pd.Timedelta(days=10), origin + pd.Timedelta(days=3), freq="h"
+        origin - timedelta(days=10), origin + timedelta(days=3), freq="h"
     )
     weather = pd.DataFrame({"timestamp": wx_index})
     for var in config.WEATHER_HOURLY_VARS:

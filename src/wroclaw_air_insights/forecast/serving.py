@@ -7,6 +7,8 @@ weather), plus the stored PM2.5 history for the deep lags.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pandas as pd
 
 from wroclaw_air_insights import clean, config, db
@@ -62,7 +64,7 @@ def predict_next_24h(station_id: int = config.PRIMARY_STATION_ID) -> pd.DataFram
             "timestamp": stamps.to_numpy(),
             # Hours from the origin, not the row's position: a gap in the assembled rows
             # would otherwise mislabel every lead after it.
-            "lead": ((stamps - origin) // pd.Timedelta(hours=1)).astype(int).to_numpy(),
+            "lead": ((stamps - origin) // timedelta(hours=1)).astype(int).to_numpy(),
             "predicted_pm25": bundle["model"].predict(x).round(1),
         }
     )

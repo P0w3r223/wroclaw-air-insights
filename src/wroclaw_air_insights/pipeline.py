@@ -110,7 +110,16 @@ def observation_freshness(pm25: pd.DataFrame, now: datetime) -> dict:
     latest = pd.to_datetime(pm25["timestamp"]).max()
     # Stored stamps are tz-naive local time; the clock handed in is aware. One clock, so the
     # naive one is read as config.TIMEZONE rather than as UTC.
-    aware = latest.tz_localize(now.tzinfo) if latest.tzinfo is None else latest
+    #
+    # The DST arguments are load bearing, not tidiness. tz_localize raises by default on the
+    # ambiguous fall-back hour and the non-existent spring-forward one, and this runs near the
+    # top of train() — so a station whose last reading sits in either would kill the daily job
+    # outright, which is the opposite of what recording the outage is for.
+    aware = (
+        latest.tz_localize(now.tzinfo, ambiguous=True, nonexistent="shift_forward")
+        if latest.tzinfo is None
+        else latest
+    )
     age = (now - aware).total_seconds() / 3600
     return {
         "latest_observation": aware.isoformat(),

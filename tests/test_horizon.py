@@ -11,6 +11,8 @@ The policy tests pin the shape of the decision: a contiguous prefix decided fold
 not twenty-four independent argmins on the folds that also produce the published figure.
 """
 
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -69,21 +71,21 @@ def test_observation_at_origin_at_lead_24_is_the_existing_persistence_baseline()
 
 def test_observation_at_origin_shifts_by_time_across_a_missing_hour():
     pm25, weather = _counting_data()
-    pm25 = pm25[pm25["timestamp"] != _ORIGIN + pd.Timedelta(hours=200)].reset_index(drop=True)
+    pm25 = pm25[pm25["timestamp"] != _ORIGIN + timedelta(hours=200)].reset_index(drop=True)
     frame = features.build_features(pm25, weather)
     origins = features.observations_at_origin(pm25, frame["timestamp"], (3,))
 
-    at_206 = frame["timestamp"] == _ORIGIN + pd.Timedelta(hours=206)
+    at_206 = frame["timestamp"] == _ORIGIN + timedelta(hours=206)
     assert origins[3][at_206.to_numpy()].iloc[0] == float(206 - 3)
 
 
 def test_observation_at_origin_is_nan_where_the_history_has_a_hole():
     pm25, weather = _counting_data()
-    pm25 = pm25[pm25["timestamp"] != _ORIGIN + pd.Timedelta(hours=200)].reset_index(drop=True)
+    pm25 = pm25[pm25["timestamp"] != _ORIGIN + timedelta(hours=200)].reset_index(drop=True)
     frame = features.build_features(pm25, weather)
     origins = features.observations_at_origin(pm25, frame["timestamp"], (3,))
 
-    at_203 = frame["timestamp"] == _ORIGIN + pd.Timedelta(hours=203)
+    at_203 = frame["timestamp"] == _ORIGIN + timedelta(hours=203)
     assert np.isnan(origins[3][at_203.to_numpy()].iloc[0])
 
 

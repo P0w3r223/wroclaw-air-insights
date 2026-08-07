@@ -4,6 +4,7 @@ The leakage tests are the important ones: they pin down that features only ever 
 into the past, which is the methodological point of the whole project.
 """
 
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -57,7 +58,7 @@ def test_lags_stay_time_correct_across_a_missing_hour():
     gap_ts = weather["timestamp"].iloc[200]
     weather = weather[weather["timestamp"] != gap_ts].reset_index(drop=True)
     frame = features.build_features(pm25, weather)
-    row = frame[frame["timestamp"] == _ORIGIN + pd.Timedelta(hours=230)]
+    row = frame[frame["timestamp"] == _ORIGIN + timedelta(hours=230)]
     assert len(row) == 1
     # value == hour index, so lag_24 at position 230 must be exactly 206, not off-by-one
     assert row["pm25_lag_24"].iloc[0] == float(230 - 24)
@@ -214,7 +215,7 @@ def test_build_inference_features_returns_future_rows():
     origin = pm25["timestamp"].iloc[-1]
     future_wx = pd.DataFrame(
         {
-            "timestamp": pd.date_range(origin + pd.Timedelta(hours=1), periods=24, freq="h"),
+            "timestamp": pd.date_range(origin + timedelta(hours=1), periods=24, freq="h"),
             "temperature_2m": 5.0,
             "wind_speed_10m": 3.0,
         }
