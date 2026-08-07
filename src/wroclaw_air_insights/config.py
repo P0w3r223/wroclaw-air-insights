@@ -124,6 +124,24 @@ WEATHER_HOURLY_VARS: tuple[str, ...] = (
 # --- Forecast task -----------------------------------------------------------
 FORECAST_HORIZON_HOURS = 24
 
+# The lead times the published forecast actually covers. The model is trained on one task
+# — "predict FORECAST_HORIZON_HOURS ahead" — but the page charts every hour from +1 to +24,
+# so each of these is a separate forecasting problem with its own naive reference.
+FORECAST_LEADS: tuple[int, ...] = tuple(range(1, FORECAST_HORIZON_HOURS + 1))
+
+# Rolling-origin folds used by every cross-validated figure. One constant so the model, the
+# naive rules and the per-lead comparison cannot silently drift onto different folds.
+CV_SPLITS = 5
+
+# Which predictor answered a published hour. Named here rather than in the forecast package
+# so the plotting code can label a point without importing an estimator.
+FORECAST_SOURCE_MODEL = "model"
+FORECAST_SOURCE_NAIVE = "naive"
+
+# Leads the report tables in full. The curve chart carries all 24; a 24-row table would be
+# rows of near-identical numbers, and these are the ones a reader can reason about.
+REPORT_LEAD_ROWS: tuple[int, ...] = (3, 6, 12)
+
 # How much of the held-out window the report charts as a backtest. Long enough to show
 # several daily cycles, short enough that hourly points stay readable.
 BACKTEST_WINDOW_DAYS = 14
