@@ -61,7 +61,31 @@ def test_a_stale_reading_says_so_plainly_and_says_the_station_stopped():
     note = report._freshness_note(_forecast(origin="2026-08-05 12:00"), _NOW)
     assert "<strong>" in note
     assert "48 hours before this page was built" in note
-    assert "it stopped" in note
+    assert "stopped reporting" in note
+
+
+def test_a_short_gap_reports_the_age_without_diagnosing_an_outage():
+    """One hour past normal GIOŚ lag is consistent with a publishing delay. Saying the
+    station stopped would be a diagnosis derived from a threshold rather than from data."""
+    note = report._freshness_note(_forecast(origin="2026-08-07 08:00"), _NOW)
+    assert "no longer current" in note
+    assert "stopped reporting" not in note
+
+
+@pytest.mark.parametrize(
+    "age_hours,printed",
+    [(2.4, "2 h"), (2.6, "3 h"), (2.99, "3 h"), (3.0, "3 h"), (3.4, "3 h")],
+)
+def test_the_printed_age_and_the_verdict_cannot_disagree(age_hours, printed):
+    """The regression: branching on the unrounded age while printing the rounded one let
+    2.99 h render "3 h" calmly and 3.00 h render "3 hours" as an alarm — same number on the
+    page, opposite verdicts, and no way for a reader to tell which side of the line they saw.
+    """
+    origin = (_NOW - timedelta(hours=age_hours)).replace(tzinfo=None)
+    note = report._freshness_note(_forecast(origin=str(origin)), _NOW)
+    assert printed in note
+    shown = int(printed.split()[0])
+    assert ("<strong>" in note) is (shown >= config.STALE_ORIGIN_HOURS)
 
 
 @pytest.mark.parametrize(
@@ -101,6 +125,42 @@ def test_a_clock_behind_the_origin_is_silent_rather_than_reporting_negative_age(
     """Between ingest and render the station can publish a newer hour than the page's clock
     on a machine whose clock drifted; a negative age is not information."""
     assert report._freshness_note(_forecast(origin="2026-08-07 18:00"), _NOW) == ""
+
+
+_DST_CASES = [
+    ("2026-10-25 02:30", datetime(2026, 10, 25, 12, 0, tzinfo=_TZ), "fall-back, ambiguous"),
+    ("2026-03-29 02:30", datetime(2026, 3, 29, 12, 0, tzinfo=_TZ), "spring-forward, absent"),
+]
+
+
+@pytest.mark.parametrize("origin,now,label", _DST_CASES)
+def test_a_dst_boundary_origin_does_not_take_the_page_down(origin, now, label):
+    """The blocking defect this pins.
+
+    `tz_localize` raises by default on both DST hours, `_freshness_note` is called
+    unconditionally by `_render_page`, and nothing catches it — so a station whose last
+    reading lands in either hour produces no page at all, on every build from then on. The
+    outage handler failing on the outage, which inverts the whole design.
+    """
+    note = report._freshness_note(_forecast(origin=origin), now)
+    assert note, f"{label}: the page went silent instead of reporting the age"
+    assert "before this page was built" in note
+
+
+@pytest.mark.parametrize("origin,now,label", _DST_CASES)
+def test_a_dst_boundary_reading_does_not_kill_the_training_job(origin, now, label):
+    record = pipeline.observation_freshness(_pm25(origin), now)
+    assert record["latest_observation"] is not None, label
+    assert record["age_hours"] is not None
+
+
+def test_an_infinite_lead_is_skipped_rather_than_overflowing():
+    """`notna` is True for inf, and `int(inf)` raises OverflowError — the one gap in the
+    degradation ladder."""
+    frame = _forecast()
+    frame["lead"] = frame["lead"].astype(float)
+    frame.loc[0, "lead"] = np.inf
+    assert report._forecast_origin(frame, _NOW) == pd.Timestamp("2026-08-07 11:00", tz=_TZ)
 
 
 def test_an_already_aware_timestamp_is_not_localised_twice():

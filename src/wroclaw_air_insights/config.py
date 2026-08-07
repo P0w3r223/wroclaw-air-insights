@@ -155,3 +155,11 @@ BACKTEST_WINDOW_DAYS = 14
 # decides how plainly it says the reading is old, which is why the exact value is not load
 # bearing.
 STALE_ORIGIN_HOURS = 3
+
+# When a gap stops having an innocent explanation. Between STALE_ORIGIN_HOURS and this, the
+# page reports the age and says the earliest hours are no longer current — an observation it
+# can support. Past a full day there is no publishing delay that accounts for it, so the page
+# is allowed to say the station has stopped reporting. Two thresholds because they answer two
+# different questions, and stating a diagnosis off the first one would be a claim the data
+# does not carry.
+STATION_OUTAGE_HOURS = 24

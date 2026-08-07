@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 
 from wroclaw_air_insights import charts, config, horizon_section, rejected_section
@@ -53,22 +54,31 @@ def _forecast_origin(forecast_df: pd.DataFrame, generated_at: datetime):
     Stored timestamps are tz-naive and ``generated_at`` is aware, so subtracting them raises.
     Naive stamps are read as ``config.TIMEZONE`` — the project runs on one clock, and this is
     the seam where that assumption becomes load bearing rather than merely true.
+
+    Both DST arguments are mandatory rather than decorative. ``tz_localize`` defaults to
+    raising on the ambiguous hour and on the one that does not exist, and ``clean.to_hourly_grid``
+    keeps its timestamps naive precisely to sidestep that. A station whose final reading lands
+    inside the fall-back hour would otherwise pin ``max()`` on an ambiguous stamp and take the
+    whole page down on every subsequent build — the outage handler failing on the outage. An
+    hour of error one night a year is the right trade against no page at all.
     """
     if forecast_df.empty or "lead" not in forecast_df.columns:
         return None
     stamps = pd.to_datetime(forecast_df["timestamp"], errors="coerce")
     leads = pd.to_numeric(forecast_df["lead"], errors="coerce")
-    usable = stamps.notna() & leads.notna()
+    # isfinite, not notna: an infinite lead passes notna and then overflows int().
+    usable = stamps.notna() & np.isfinite(leads)
     if not usable.any():
         return None
 
     first = usable.idxmax()
     # stdlib timedelta, not pd.Timedelta(hours=...): under pandas 2.3 / numpy 2.5 the keyword
-    # form is deprecated and slated to raise. Three older call sites still use it — see the
-    # note in this commit's message.
+    # form is deprecated and slated to raise.
     origin = stamps[first] - timedelta(hours=int(leads[first]))
     if origin.tzinfo is None:
-        origin = origin.tz_localize(generated_at.tzinfo)
+        origin = origin.tz_localize(
+            generated_at.tzinfo, ambiguous=True, nonexistent="shift_forward"
+        )
     return origin.tz_convert(generated_at.tzinfo)
 
 
@@ -92,17 +102,25 @@ def _freshness_note(forecast_df: pd.DataFrame, generated_at: datetime) -> str:
         return ""
 
     when = origin.strftime("%Y-%m-%d %H:%M %Z")
-    if age < config.STALE_ORIGIN_HOURS:
-        return (
-            f"""<p class="hint">Anchored on the {when} reading, {age:.0f} h before this page
+    # Branch on the figure that gets printed, not on the one behind it. Testing the unrounded
+    # age let 2.99 h and 3.00 h both render "3 h" while reaching opposite verdicts, so two
+    # pages could show the same number and disagree about whether anything was wrong.
+    shown = round(age)
+    if shown < config.STALE_ORIGIN_HOURS:
+        return f"""<p class="hint">Anchored on the {when} reading, {shown} h before this page
   was built.</p>"""
-        )
-    return (
-        f"""<p class="hint"><strong>The most recent reading available was {when}</strong> —
-  {age:.0f} hours before this page was built, so the earliest hours below repeat a
-  measurement that is no longer current. The station reports hourly; a gap this size means
-  it stopped.</p>"""
+
+    # What the page can see is that readings stopped arriving; whether the *station* stopped
+    # is a diagnosis, and at one hour past normal GIOŚ lag the data does not support it. It
+    # is only asserted once the gap is long enough to have no innocent reading.
+    diagnosis = (
+        " The station reports hourly, so a gap this long means it has stopped reporting."
+        if shown >= config.STATION_OUTAGE_HOURS
+        else ""
     )
+    return f"""<p class="hint"><strong>The most recent reading available was {when}</strong> —
+  {shown} hours before this page was built, so the earliest hours below repeat a measurement
+  that is no longer current.{diagnosis}</p>"""
 
 
 def _backtest_section(metadata: dict) -> str:
