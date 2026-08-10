@@ -160,3 +160,64 @@ def test_a_gate_that_fails_still_reports_the_leads_that_cleared():
 
 def test_an_empty_measurement_does_not_pass_by_vacuum():
     assert specialists.gate([])["verdict"] == specialists.FAIL
+
+
+# --- the served band ----------------------------------------------------------
+def test_the_band_is_the_longest_unbroken_run_not_every_lead_that_cleared():
+    # The measured shape on this station: a solid run in the middle, then isolated leads
+    # higher up. Serving the isolated ones would be per-lead selection on the same folds
+    # that produce the published figures — the best-of-N phase 0 refused for the prefix.
+    scored = [
+        _record(lead, 5, 5) if lead in {*range(5, 18), 19, 20, 22} else _record(lead, 0, 0)
+        for lead in range(1, 25)
+    ]
+    assert specialists.band(scored) == (5, 17)
+
+
+def test_a_tie_on_length_goes_to_the_earlier_run():
+    # Measured preference, not an arbitrary one: the specialist's edge comes from holding a
+    # fresher reading than pm25_lag_24 and decays as the lead approaches 24, so of two runs
+    # the same length the earlier one is worth more.
+    scored = [
+        _record(lead, 5, 5) if lead in {2, 3, 4, 10, 11, 12} else _record(lead, 0, 0)
+        for lead in range(1, 25)
+    ]
+    assert specialists.band(scored) == (2, 4)
+
+
+def test_no_lead_clearing_means_no_band_rather_than_the_best_available():
+    assert specialists.band([_record(lead, 0, 0) for lead in range(1, 25)]) is None
+
+
+def test_a_failed_gate_ships_no_band_even_though_a_run_exists():
+    # The gate is the bar committed to in advance. Taking the best run out of a measurement
+    # that failed it would be choosing the bar after seeing the numbers.
+    scored = [_record(lead, 5, 5) for lead in range(1, 5)] + [
+        _record(lead, 0, 0) for lead in range(5, 25)
+    ]
+    result = {"model": "HistGradientBoosting", "by_lead": scored, "gate": specialists.gate(scored)}
+    record = specialists.serving_record(result)
+
+    assert record["gate"]["verdict"] == specialists.FAIL
+    assert specialists.band(scored) == (1, 4)  # a run is there...
+    assert record["band"] is None              # ...and it does not ship
+
+
+def test_the_serving_record_keys_every_measured_lead_for_the_page():
+    scored = [_record(lead, 5, 5) for lead in range(1, 25)]
+    record = specialists.serving_record(
+        {"model": "HistGradientBoosting", "by_lead": scored, "gate": specialists.gate(scored)}
+    )
+    assert record["band"] == [1, 24]
+    assert sorted(record["by_lead"]) == list(range(1, 25))
+
+
+def test_the_lag_rule_has_one_definition_that_serving_can_read_back():
+    # Serving rebuilds the specialist's matrix from the bundle. If it re-derived the lag set
+    # instead, that would be a second copy of the contract, free to drift from the one the
+    # estimator was fitted on.
+    for lead in (1, 5, 24):
+        frame = specialists.specialist_features(*_counting_data(400), lead)
+        for lag in specialists.specialist_lags(lead):
+            assert f"pm25_lag_{lag}" in frame.columns
+    assert specialists.specialist_lags(24) == features.DEFAULT_LAGS_H

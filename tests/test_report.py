@@ -719,8 +719,10 @@ def _horizon(crossover=6):
 
 def test_horizon_section_states_that_the_model_cannot_see_the_lead():
     html = report._horizon_section(_fresh_metadata(horizon=_horizon()))
-    assert "the lead time is not" in html
-    assert "the same</em> at every hour" in html
+    assert "the lead time is\n  not one of its inputs" in html
+    # Scoped to the main model, because the chart now carries two curves that are not flat
+    # and a bare "its error is the same at every hour" would be refuted by the one beside it.
+    assert "<em>its</em> line is flat" in html
 
 
 def test_horizon_section_names_the_predictor_serving_each_lead():
@@ -777,7 +779,7 @@ def test_horizon_section_still_says_plainly_worse_when_that_is_what_happened():
 
 def test_horizon_section_says_so_plainly_when_the_model_wins_every_lead():
     html = report._horizon_section(_fresh_metadata(horizon=_horizon(crossover=0)))
-    assert "beats the naive rule at every lead" in html
+    assert "The naive rule keeps no hour on this chart" in html
     assert "For the first" not in html
 
 
@@ -1001,3 +1003,130 @@ def test_render_page_never_publishes_a_peak_it_cannot_compute(forecast_df):
     # metadata — so the metadata parametrize above cannot reach it. `predict_next_24h` raises
     # rather than returning an empty frame today, but item 5 adds callers to this seam.
     assert "nan" not in _prose_only(_page(_fresh_metadata(), forecast_df=forecast_df))
+
+
+# --- the third band on the page -----------------------------------------------
+def _horizon_with_band(band=(5, 12), crossover=6, folds_required=4, n_folds=5):
+    leads = (1, 3, 5, 6, 12, 24)
+    naive = {1: 3.75, 3: 5.51, 5: 6.73, 6: 7.20, 12: 8.51, 24: 8.61}
+    specialist = {1: 4.14, 3: 5.43, 5: 5.88, 6: 6.02, 12: 6.56, 24: 6.97}
+    assignment = {}
+    for lead in leads:
+        if band and band[0] <= lead <= band[1]:
+            assignment[lead] = "specialist"
+        else:
+            assignment[lead] = "naive" if lead <= crossover else "model"
+    return {
+        "crossover_lead": crossover,
+        "naive_label": baseline.LABELS["origin_persistence"],
+        "specialist_band": list(band) if band else None,
+        "specialist": {
+            "gate": {"folds_required": folds_required, "verdict": "pass"},
+            "band": list(band) if band else None,
+            "by_lead": {
+                lead: {"lead": lead, "specialist_mae": specialist[lead],
+                       "vs_naive": {"n_folds": n_folds},
+                       "vs_incumbent": {"n_folds": n_folds}}
+                for lead in leads
+            },
+        },
+        "leads": assignment,
+        "scored": {
+            lead: _lead_record(lead, naive_mae=naive[lead], wins=0 if lead <= crossover else 5)
+            for lead in leads
+        },
+    }
+
+
+def test_horizon_section_names_the_band_and_the_bar_it_had_to_clear():
+    html = report._horizon_section(_fresh_metadata(horizon=_horizon_with_band()))
+    assert "From +5 h to +12 h" in html
+    # Interpolated from the gate the run stored, not written into the sentence: the bar is a
+    # constant today and the band moves with every retrain.
+    assert "at least 4 of 5 rolling folds" in html
+    assert "<td>specialist</td>" in html
+
+
+def test_horizon_section_ends_the_naive_run_where_the_band_begins():
+    # The defect this guards: phase 0 hands the naive rule every lead up to the crossover,
+    # and the band then takes some of them back. A sentence quoting the crossover would name
+    # an hour the table beside it shows being served by something else.
+    html = report._horizon_section(
+        _fresh_metadata(horizon=_horizon_with_band(band=(5, 12), crossover=6))
+    )
+    assert "For the first 4 hours" in html
+    assert "For the first 6 hours" not in html
+
+
+def test_horizon_section_does_not_claim_hours_were_taken_from_a_rule_that_kept_them():
+    # A band starting above the crossover takes nothing from the naive rule, so the sentence
+    # that says it does must not appear.
+    taken = report._horizon_section(
+        _fresh_metadata(horizon=_horizon_with_band(band=(5, 12), crossover=6))
+    )
+    untouched = report._horizon_section(
+        _fresh_metadata(horizon=_horizon_with_band(band=(12, 24), crossover=3))
+    )
+    assert "would otherwise have kept" in taken
+    assert "would otherwise have kept" not in untouched
+
+
+def test_horizon_section_prints_the_specialist_column_and_its_band_edges():
+    html = report._horizon_section(
+        _fresh_metadata(horizon=_horizon_with_band(band=(5, 12), crossover=6))
+    )
+    assert "Specialist MAE" in html
+    # Both boundaries the prose names have to be rows the reader can check.
+    assert "<td>+5 h</td>" in html and "<td>+12 h</td>" in html
+    assert "<td>5.88</td>" in html
+
+
+def test_horizon_section_says_nothing_about_specialists_when_none_shipped():
+    html = report._horizon_section(_fresh_metadata(horizon=_horizon_with_band(band=None)))
+    assert "fitted for <em>that lead alone</em>" not in html
+    assert "For the first 6 hours" in html
+    # The column stays, because the measurement still ran and its numbers are the evidence
+    # that nothing earned the hours.
+    assert "Specialist MAE" in html
+
+
+def test_horizon_section_explains_a_moving_flat_column_only_when_it_moves():
+    # "Its line is flat" beside a column printing 6.97 and 6.96 is a sentence its neighbour
+    # refutes. The caveat is real — a lead whose origin reading is missing changes which
+    # hours are averaged — but stating it where the column is genuinely identical would be
+    # explaining a discrepancy the reader cannot see.
+    steady = report._horizon_section(_fresh_metadata(horizon=_horizon_with_band()))
+    assert "that is the scoring set rather than the model" not in steady
+
+    moved = _horizon_with_band()
+    moved["scored"][12] = _lead_record(12, model_mae=6.96, naive_mae=8.51, wins=4)
+    html = report._horizon_section(_fresh_metadata(horizon=moved))
+    assert "that is the scoring set rather than the model" in html
+    assert "<td>6.96</td>" in html
+
+
+def test_horizon_section_publishes_the_null_when_no_band_earned_its_hours():
+    # The specialist column is on the page either way, because it is the evidence. A column
+    # of numbers with no sentence beside it invites the reader to draw a conclusion from a
+    # comparison the run explicitly declined to act on.
+    horizon_meta = _horizon_with_band(band=None)
+    horizon_meta["specialist"]["gate"] = {
+        "folds_required": 4, "verdict": "fail",
+        "leads_clearing": [5, 6, 7, 12, 17, 19, 22], "leads_measured": 24,
+        "majority_needed": 13,
+    }
+    html = report._horizon_section(_fresh_metadata(horizon=horizon_meta))
+
+    assert "Only 7 of the 24 leads" in html
+    assert "against the 13 the decision required" in html
+    assert "Specialist MAE" in html
+    assert "fitted for <em>that lead alone</em>" not in html
+
+
+def test_horizon_section_stays_silent_rather_than_inventing_a_tally_it_lacks():
+    # A bundle whose gate was never recorded cannot say how many leads cleared, and a
+    # sentence with a blank in it is worse than no sentence.
+    horizon_meta = _horizon_with_band(band=None)
+    horizon_meta["specialist"]["gate"] = {}
+    html = report._horizon_section(_fresh_metadata(horizon=horizon_meta))
+    assert "did not ship on" not in html
