@@ -1,10 +1,12 @@
 # Report roadmap — making the Pages report speak to a non-technical reader
 
 Date: 2026-08-06
-Status: draft — fourth revision (item 5 **complete**: phase 1 measured, gated and now served on
-a re-measured band, bundle schema 3; item 7's forecast log **live** since 2026-08-08 and grading
-itself daily; both published nulls re-measured under the paired rule that replaced the retracted
-fold-spread test; item 14 dropped)
+Status: draft — fifth revision (item 5 **complete**: phase 1 measured, gated and served on a
+re-measured band, whose gate then failed on fresher data — the null ships and the machinery
+stands; item 6 **complete**: three interval constructions measured, one publishable, bundle
+schema 4; item 7's forecast log **live** since 2026-08-08, now grading interval coverage too;
+both published nulls re-measured under the paired rule that replaced the retracted fold-spread
+test; item 14 dropped. Every numbered item is now measured or dropped.)
 Author: P0w3r223 + Claude
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
@@ -789,9 +791,70 @@ therefore not obviously the right one — see the entry itself.
    noise. This is the fourth review round in this project to find the same defect class, and the
    first where the trigger was a *new row* rather than new prose.
 
-6. **Prediction intervals.** sklearn ≥1.5 is pinned, so
-   `HistGradientBoostingRegressor(loss="quantile")` is two extra fits — but on RF it needs
-   per-tree spread or a third-party quantile forest. Sequence after the model choice, now settled.
+6. **Prediction intervals — built, checked, and mostly withheld.** The entry as written
+   proposed the construction (`HistGradientBoostingRegressor(loss="quantile")`, two extra
+   fits) and one condition: publish only with a coverage check. The construction was the easy
+   part. The condition is what the result turned out to be.
+
+   **An interval is the only claim on this page a reader can falsify.** "The model is good" is
+   not checkable; "80% of measured hours land inside this band" is, on hours the band was not
+   fitted on. So the check runs on the same rolling folds as everything else, and a band ships
+   only if it comes back close to what it promises.
+
+   `forecast/intervals.py` measures three constructions against one bar:
+
+   | Interval | Coverage | Per-fold / per-lead | Width | Verdict |
+   |----------|:--------:|:-------------------:|:-----:|:-------:|
+   | Model — quantile regression | 0.581 | 0.51 – 0.65 | 12.8 | withheld |
+   | Model — conformal band from its own held-out errors | 0.853 | 0.70 – 0.92 | 24.2 | withheld |
+   | Naive rule — per lead, from the record | 0.762 | 0.745 – 0.797 | 22.1 | **published** |
+
+   *(Dated record, 8 558 rows ending 2026-08-10. Nominal 0.80 throughout.)*
+
+   **Measuring only quantile regression would have produced a claim about a library, not about
+   the problem.** It is the obvious tool and it covers 58% of hours while labelled 80% — a band
+   that reads as precision and is not. Publishing that as "prediction intervals do not work
+   here" would have repeated this project's own mistake of arguing from one measurement, so the
+   standard alternative was measured too: calibrate on the *previous fold's* held-out residuals
+   and apply to the next, which is split conformal prediction with time supplying the split.
+   That is genuinely out of sample, costs no extra fits, and it is honest about resting on one
+   fold fewer than every other figure on the page, since the first fold has nothing to
+   calibrate from.
+
+   **The conformal band is the interesting failure.** It averages 0.853 — it misses the
+   tolerance by three thousandths, which on its own would be a coin-flip verdict not worth
+   defending. What disqualifies it is the spread: **0.70 on one fold and 0.92 on another**. That
+   is not an 80% interval that wobbles, it is a band that is too narrow in one season and too
+   wide in another, and the average conceals exactly that. So the gate gained a second
+   condition — no single fold, and for the per-lead construction no single lead, further than
+   0.10 from nominal — which is the same rule this project already applies to every other
+   comparison: **judge it fold by fold, not on the mean.** Adding it after seeing the numbers is
+   worth flagging; it changes no verdict, since the conformal band fails the average check
+   independently, and the quantile band fails it by 0.22.
+
+   **What passes is the naive rule's band, and the reason it passes is the reason it exists.**
+   It is anchored on the reading *in hand*, so it moves with the level of the air instead of
+   carrying a fixed width learned from a training window that has since drifted. The model's
+   bands are fitted on the past and applied to a later distribution; that is where both of them
+   lose. And the per-lead construction confirmed, on the same folds, the physical argument it
+   was built from: the band **does** widen with the lead — 11.3 µg/m³ at +1 h against 23.6 at
+   +12 h. Two feature ideas in this document were physically sound and empirically null, so
+   this one is stated as measured rather than as obvious.
+
+   **The page therefore draws a band over four hours of twenty-four and says so**, lists the two
+   constructions that failed with their numbers, and states plainly that a range covering far
+   fewer hours than its label promises is worse than no range. That is a thinner deliverable
+   than "the forecast now has uncertainty bands", and it is the one the evidence supports.
+
+   **The log grades it too**, which is the part cross-validation structurally cannot do. Every
+   published band is written to the forecast log with the row it belongs to, and `score-log`
+   reports out-of-sample coverage by predictor. An 80% band is a promise about hours that had
+   not happened when it was drawn; the log is where those hours arrive.
+
+   *One defect found by looking at the live output.* The band ran below zero — a lower bound of
+   **−0.3 µg/m³** at the fourth lead, because a drift offset added to a small reading has
+   nothing stopping it. Clamped at zero, which cannot change the coverage the band was gated
+   on: it moves the boundary only across values no observation can take.
 
 ### Later
 

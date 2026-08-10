@@ -14,7 +14,9 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from wroclaw_air_insights import charts, config, horizon_section, regime_section, rejected_section
+from wroclaw_air_insights import (
+    charts, config, horizon_section, interval_section, regime_section, rejected_section,
+)
 from wroclaw_air_insights.forecast import baseline, model, prospective, serving
 from wroclaw_air_insights.formatting import fmt as _fmt
 from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
@@ -568,6 +570,7 @@ def _render_page(
     verdict = _verdict(metadata)
     skill_line = _skill_line(metadata)
     horizon_section = _horizon_section(metadata)
+    interval_html = interval_section.render(metadata)
     rejected = _rejected_section(metadata)
     backtest_section = _backtest_section(metadata)
     regime_html = regime_section.render(metadata)
@@ -659,6 +662,7 @@ def _render_page(
 {metrics_table}
   {skill_line}
 {horizon_section}
+{interval_html}
 {backtest_section}
 {regime_html}
 {rejected}
