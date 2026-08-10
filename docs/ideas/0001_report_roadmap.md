@@ -1,8 +1,9 @@
 # Report roadmap — making the Pages report speak to a non-technical reader
 
 Date: 2026-08-06
-Status: draft — third revision (both published nulls **re-measured** under the paired rule
-that replaced the retracted fold-spread test; item 14 dropped)
+Status: draft — fourth revision (item 5 phase 1 **measured**, gate passed, serving not shipped;
+item 7's forecast log **live** since 2026-08-08 and grading itself daily; both published nulls
+re-measured under the paired rule that replaced the retracted fold-spread test; item 14 dropped)
 Author: P0w3r223 + Claude
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
@@ -699,6 +700,53 @@ therefore not obviously the right one — see the entry itself.
    this command is a figure as of today. Next: the page can carry it once there is enough of a
    record to be worth reading, which is the thing that makes item 3 prospective rather than
    retrospective.
+
+   ### The log is running, and its first numbers are not evidence of anything
+
+   *Dated record, from the daily run of 2026-08-10 — three issuances, and it is written down
+   here so that a later reading has a starting point, not because it says anything yet.*
+
+   71 logged forecasts, **47 graded**, covering valid hours 2026-08-08 08:00 → 2026-08-10 07:00.
+   By predictor: model 1.898 µg/m³ over 42 hours, naive rule 2.320 over 5.
+
+   **Three reasons not to read that as a result, all of which have to be stated beside it.**
+
+   - *It is smaller than the difference it would be measuring.* Five naive hours is one prefix
+     of one day repeated; the crossover moves with the daily retrain, so those five are not even
+     a fixed lead set. The prospective test of the crossover this log was built for needs weeks.
+   - *The level is a property of the days, not of the model.* 1.9 µg/m³ against the year-round
+     CV figure of ~7 does not mean the deployed model is four times better than cross-validation
+     says. Early August was calm; the same easy-window effect that made the single-split MAE
+     4.15 against a rolling 7.18 is operating here with three days instead of ten weeks. A
+     prospective figure is only readable against a period, which is why `prospective_summary`
+     refuses to return one without naming its window.
+   - *It is graded against observations that can still be revised.* Two days of GIOŚ data is
+     exactly the age at which a revision is most likely.
+
+   What the run does establish is that the mechanism works end to end on infrastructure rather
+   than on fixtures: three daily runs appended three forecasts, the branch holds one file with
+   **no duplicate `(station, origin, lead)` key**, and the grading step joins it to the freshly
+   ingested observations without a clock conversion. That was the thing that could have been
+   wrong and is now known not to be.
+
+   **And in three days it has already shown two things cross-validation cannot.** Both are
+   observations, not defects, and both are what a log is *for*:
+
+   - **A published day is not always 24 gradable leads.** 2026-08-09 logged leads 1–23 and no
+     +24 h row. Two things produce that and the log cannot tell them apart, by design: the row
+     never reached the frame (a gap in `build_inference_features`), or it reached it as `NaN`
+     and `forecast_rows` skipped it, because an hour the page prints as "n/a" is not a forecast
+     to be graded on. Either way, leads are derived from the origin rather than from row
+     position, so the 23 that are there are labelled correctly and nothing is silently shifted.
+     Worth knowing before any section is written that assumes 24 — and worth resolving in the
+     log itself, since "we published nothing for that hour" and "we published a number" are
+     different events and only one of them is currently visible.
+   - **The naive prefix collapsed to zero on one of the three days.** Naive served 5 leads on
+     08-08 and 4 on 08-10, and **none at all** on 08-09 — the boundary is re-measured on every
+     retrain, and one run put it at the very start. That the crossover moves was expected and is
+     stated on the page; that it can vanish for a day is the first evidence of how far it moves.
+     A log long enough to give the *distribution* of that boundary is more informative than any
+     single run's value, and nothing else in the project can produce it.
 
 8. **Health context** — translate µg/m³ into what it means for a runner or someone with
    asthma. Low technical signal, real product signal.
