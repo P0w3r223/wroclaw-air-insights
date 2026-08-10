@@ -300,3 +300,88 @@ def test_measure_scores_every_lead_on_the_same_folds_and_derives_a_policy():
         assert record["delta"]["n_folds"] == 3
         assert len(record["model_fold_mae"]) == len(record["naive_fold_mae"]) == 3
     assert set(policy["leads"].values()) <= {horizon.NAIVE_SOURCE, horizon.MODEL_SOURCE}
+
+
+# --- three predictors, and which one outranks which ---------------------------
+def _specialist(band, folds_required=4, n_folds=5, leads=range(1, 25)):
+    return {
+        "gate": {"folds_required": folds_required, "verdict": "pass"},
+        "band": list(band) if band else None,
+        "by_lead": {
+            lead: {"lead": lead, "specialist_mae": 6.0,
+                   "vs_naive": {"n_folds": n_folds}, "vs_incumbent": {"n_folds": n_folds}}
+            for lead in leads
+        },
+    }
+
+
+def test_the_specialist_band_outranks_the_naive_prefix_where_they_overlap():
+    # The two bars are not equally strong. The prefix only asks that the *incumbent* fail to
+    # win a majority against the naive rule; the band asks the specialist to beat both
+    # references separately, which includes beating the naive rule on those very hours.
+    # Leaving them to the naive rule would let the weaker measurement overrule the stronger.
+    scored = {lead: _record(lead, [7.0, 7.0], [3.0, 3.0]) for lead in (1, 2, 3)}
+    scored[4] = _record(4, [7.0, 7.0], [9.0, 9.0])
+    policy = horizon.serving_policy(scored, (1, 2, 3, 4), _specialist((2, 4)))
+
+    assert policy["crossover_lead"] == 3
+    assert policy["leads"] == {
+        1: horizon.NAIVE_SOURCE,
+        2: horizon.SPECIALIST_SOURCE,
+        3: horizon.SPECIALIST_SOURCE,
+        4: horizon.SPECIALIST_SOURCE,
+    }
+
+
+def test_a_band_above_the_crossover_takes_nothing_from_the_naive_rule():
+    scored = {1: _record(1, [7.0, 7.0], [3.0, 3.0])}
+    scored.update({lead: _record(lead, [7.0, 7.0], [9.0, 9.0]) for lead in (2, 3, 4)})
+    policy = horizon.serving_policy(scored, (1, 2, 3, 4), _specialist((3, 4)))
+
+    assert policy["leads"][1] == horizon.NAIVE_SOURCE
+    assert policy["leads"][2] == horizon.MODEL_SOURCE
+    assert policy["leads"][4] == horizon.SPECIALIST_SOURCE
+
+
+def test_a_gate_that_shipped_no_band_leaves_the_phase_0_policy_untouched():
+    scored = {1: _record(1, [7.0, 7.0], [3.0, 3.0]), 2: _record(2, [7.0, 7.0], [9.0, 9.0])}
+    policy = horizon.serving_policy(scored, (1, 2), _specialist(None))
+
+    assert policy["specialist_band"] is None
+    assert policy["leads"] == {1: horizon.NAIVE_SOURCE, 2: horizon.MODEL_SOURCE}
+
+
+def test_apply_policy_publishes_the_specialists_answer_on_its_own_hours():
+    policy = {"crossover_lead": 1, "leads": {1: "naive", 2: "specialist", 3: "specialist"}}
+    # Rounded to the precision the page prints, like every other published number. Not a
+    # half-way value: 5.55 is not exactly representable and pinning its rounding would be
+    # pinning a float artifact rather than the behaviour.
+    served = horizon.apply_policy(_forecast(), 7.4, policy, {2: 5.56, 3: 6.0})
+
+    assert served["predicted_pm25"].tolist() == [7.4, 5.6, 6.0]
+    assert served["source"].tolist() == ["naive", "specialist", "specialist"]
+
+
+def test_a_missing_specialist_prediction_relabels_the_row_it_falls_back_on():
+    # Thirteen estimators are thirteen chances for one hour to be unbuildable. Falling back
+    # to the incumbent is right; publishing its answer under the specialist's *label* would
+    # be the one failure this column exists to prevent.
+    policy = {"leads": {1: "specialist", 2: "specialist", 3: "specialist"}}
+    served = horizon.apply_policy(_forecast(), 7.4, policy, {1: 5.5, 3: float("nan")})
+
+    assert served["predicted_pm25"].tolist() == [5.5, 12.0, 13.0]
+    assert served["source"].tolist() == ["specialist", "model", "model"]
+
+
+def test_apply_policy_reads_the_assignment_not_the_crossover_alone():
+    # The stored mapping is the decision; re-deriving it from the crossover in the serving
+    # path would silently drop the middle band on every published page.
+    policy = {"crossover_lead": 0, "leads": {1: "specialist", 2: "model", 3: "naive"}}
+    served = horizon.apply_policy(_forecast(), 7.4, policy, {1: 4.0})
+    assert served["source"].tolist() == ["specialist", "model", "naive"]
+
+
+def test_apply_policy_survives_a_policy_whose_lead_keys_went_through_json():
+    policy = {"leads": {"1": "specialist", "2": "naive", "3": "model"}}
+    served = horizon.apply_policy(_forecast(), 7.4, policy, {1: 4.0})
+    assert served["source"].tolist() == ["specialist", "naive", "model"]

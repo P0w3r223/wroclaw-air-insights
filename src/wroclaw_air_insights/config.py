@@ -135,8 +135,13 @@ CV_SPLITS = 5
 
 # Which predictor answered a published hour. Named here rather than in the forecast package
 # so the plotting code can label a point without importing an estimator.
+#
+# Three, not two: the incumbent is one model trained on the 24-hour task and blind to the lead,
+# the naive rule republishes the reading in hand, and a *specialist* is a predictor fitted for
+# exactly one lead — which is what lets it use an observation fresher than `pm25_lag_24`.
 FORECAST_SOURCE_MODEL = "model"
 FORECAST_SOURCE_NAIVE = "naive"
+FORECAST_SOURCE_SPECIALIST = "specialist"
 
 # Leads the report tables in full. The curve chart carries all 24; a 24-row table would be
 # rows of near-identical numbers, and these are the ones a reader can reason about.

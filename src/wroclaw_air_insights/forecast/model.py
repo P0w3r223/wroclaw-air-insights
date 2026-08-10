@@ -26,8 +26,10 @@ from wroclaw_air_insights.forecast import baseline, features
 
 MODEL_FILENAME = "pm25_forecaster.joblib"
 # Bundle layout version. Bumped when a bundle gains something a reader cannot do without
-# — schema 2 added the per-lead serving policy, which is measured, not derivable.
-BUNDLE_SCHEMA = 2
+# — schema 2 added the per-lead serving policy, which is measured, not derivable; schema 3
+# added the per-lead specialist estimators, which are fitted, and which a serving path cannot
+# reconstruct from the incumbent at all.
+BUNDLE_SCHEMA = 3
 # How many column names to name before the message stops being readable.
 _MISMATCH_PREVIEW = 6
 # Two predictors closer than this on a fold are tied, not separated. Anchored on the
@@ -643,6 +645,7 @@ def save_model(
     metadata: dict | None = None,
     models_dir: Path = config.MODELS_DIR,
     policy: dict | None = None,
+    specialists: dict[int, dict] | None = None,
 ) -> Path:
     """Persist a trained model with its feature order, serving policy and metadata (joblib).
 
@@ -652,9 +655,17 @@ def save_model(
     answers — because that decision is measured at training time and must not be
     re-derived, or guessed at, in the serving path.
 
-    This is the authoritative copy. ``metadata["horizon"]`` holds the same dict for readers
-    that take only the metadata — the report does — and neither may be written without the
-    other.
+    ``specialists`` maps a lead to ``{model, feature_names, lags}`` for the leads the policy
+    hands to a specialist. Each entry carries **its own** ``lags``, and that is not
+    redundancy: a specialist for lead ``l`` is trained on a matrix built with ``horizon=l``
+    and the lag set floored at ``l``, so serving it means rebuilding that same matrix. Storing
+    the recipe beside the estimator is what keeps a bundle self-describing — a serving path
+    that re-derived the lag rule from the lead would be a second definition of the contract,
+    free to drift away from the one the estimator was actually fitted on.
+
+    This is the authoritative copy. ``metadata["horizon"]`` holds the same policy dict for
+    readers that take only the metadata — the report does — and neither may be written
+    without the other.
     """
     models_dir.mkdir(parents=True, exist_ok=True)
     path = models_dir / MODEL_FILENAME
@@ -664,6 +675,7 @@ def save_model(
             "model": model,
             "feature_names": list(feature_names),
             "policy": policy or {},
+            "specialists": {int(lead): entry for lead, entry in (specialists or {}).items()},
             "metadata": metadata or {},
         },
         path,
@@ -704,12 +716,14 @@ def align_features(frame: pd.DataFrame, feature_names: list[str]) -> pd.DataFram
 
 
 def load_model(models_dir: Path = config.MODELS_DIR) -> dict:
-    """Load a persisted bundle (``schema``, ``model``, ``feature_names``, ``policy``, ``metadata``).
+    """Load a persisted bundle (``schema``, ``model``, ``feature_names``, ``policy``,
+    ``specialists``, ``metadata``).
 
-    A bundle without the current schema is refused rather than read half-heartedly. The
-    per-lead serving policy is not something a reader can reconstruct from an older bundle —
-    it is measured during training — so a compatibility path would have to invent one, and
-    the page would then publish a lead breakdown that no measurement stands behind. The
+    A bundle without the current schema is refused rather than read half-heartedly. Neither
+    of the two things a bundle gained is reconstructable by a reader: the per-lead serving
+    policy is *measured* during training, and the specialist estimators are *fitted* during
+    it. A compatibility path would have to invent the first and could not produce the second
+    at all, so the page would publish a lead breakdown that no measurement stands behind. The
     daily job retrains before it reports, so it heals itself in a single run.
     """
     path = models_dir / MODEL_FILENAME
@@ -721,8 +735,9 @@ def load_model(models_dir: Path = config.MODELS_DIR) -> dict:
     if schema != BUNDLE_SCHEMA:
         raise BundleSchemaError(
             f"The bundle at {path} is schema {schema!r}, but this version reads "
-            f"{BUNDLE_SCHEMA}. It predates the per-lead serving policy, which is measured "
-            f"at training time and cannot be reconstructed from a saved model — retrain "
-            f"with `python -m wroclaw_air_insights.pipeline train`."
+            f"{BUNDLE_SCHEMA}. It predates the per-lead specialists and the serving policy "
+            f"that places them — one is fitted at training time and the other measured "
+            f"there, and neither can be reconstructed from a saved model — retrain with "
+            f"`python -m wroclaw_air_insights.pipeline train`."
         )
     return bundle
