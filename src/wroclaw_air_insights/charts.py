@@ -26,6 +26,9 @@ from wroclaw_air_insights.forecast import baseline  # noqa: E402
 # --- Chart styling: clean, print-quality matplotlib aligned with the page palette. ---
 ACCENT = "#2563eb"
 MUTED = "#98a2b3"
+# The third predictor needs its own colour, not a shade of the model's: a specialist is a
+# different estimator, not a variant of the incumbent, and the chart is where that reads.
+_SPECIALIST = "#0f9d78"
 _WHO_LINE = "#d97706"
 _INK = "#1c2430"
 _CHART_STYLE = {
@@ -74,21 +77,41 @@ def forecast(forecast_df) -> str:
 
 
 def lead_curve(
-    leads: list[int], model_mae: list[float], naive_mae: list[float], crossover: int
+    leads: list[int],
+    model_mae: list[float],
+    naive_mae: list[float],
+    crossover: int,
+    specialist_mae: list[float | None] | None = None,
+    band: list[int] | None = None,
 ) -> str:
-    """Error against lead time: the model's flat line against the naive rule's rising one.
+    """Error against lead time: the model's flat line against the two curves that beat it.
 
     The most informative chart on the page, because it shows what a single number cannot:
     the model's error does not depend on the lead — it *cannot*, the lead is not an input —
     while the reference it has to beat gets steadily harder. Where the lines cross is where
     the forecast starts earning its keep.
+
+    The specialist curve is what makes the third band legible. It starts below both other
+    lines and converges on the flat one as the lead approaches 24, because its whole advantage
+    is holding a fresher observation than ``pm25_lag_24`` — and at a 24-hour lead that *is*
+    ``pm25_lag_24``. A reader who does not believe the band should be able to see the
+    convergence and check it against the +24 h row of the table.
     """
     fig, ax = plt.subplots(figsize=(10, 3.6))
     if crossover >= leads[0]:
         ax.axvspan(leads[0] - 0.5, crossover + 0.5, color=MUTED, alpha=0.12, zorder=1,
                    label="served by the naive rule")
+    if band:
+        ax.axvspan(band[0] - 0.5, band[1] + 0.5, color=_SPECIALIST, alpha=0.10, zorder=1,
+                   label="served by a per-lead specialist")
     ax.plot(leads, naive_mae, color=MUTED, lw=1.8, ls="--", marker="o", markersize=4,
             zorder=3, label=f"Naive — {baseline.LABELS['origin_persistence']}")
+    if specialist_mae and any(value is not None for value in specialist_mae):
+        # Gaps stay gaps: a lead the phase 1 run could not score is not a point to interpolate
+        # through, and matplotlib breaks the line on NaN by itself.
+        drawn = [float("nan") if value is None else value for value in specialist_mae]
+        ax.plot(leads, drawn, color=_SPECIALIST, lw=1.8, marker="o", markersize=4,
+                zorder=5, label="Specialist — one predictor per lead")
     ax.plot(leads, model_mae, color=ACCENT, lw=2.2, marker="o", markersize=4, zorder=4,
             label="This project's model")
     ax.set(title="Error against how far ahead the forecast reaches",
