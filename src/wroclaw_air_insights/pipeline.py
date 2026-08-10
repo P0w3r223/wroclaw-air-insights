@@ -25,7 +25,7 @@ import pandas as pd
 from wroclaw_air_insights import clean, config, db
 from wroclaw_air_insights.forecast import ab as ab_harness
 from wroclaw_air_insights.forecast import (
-    features, horizon, model, prospective, serving, specialists,
+    features, horizon, intervals, model, prospective, serving, specialists,
 )
 from wroclaw_air_insights.ingest import gios, weather
 
@@ -132,6 +132,36 @@ def _fit_specialists(
             "n_rows": len(frame),
         }
     return fitted
+
+
+def _fit_intervals(feature_frame: pd.DataFrame, measurement: dict) -> dict:
+    """Fit only the bands the coverage check cleared, and carry the verdict with them.
+
+    A band that failed leaves nothing in the bundle — not a withheld estimator the serving
+    path is trusted to skip. The check happens once, here, where the folds are; anything the
+    serving path could switch on later is a second place for the decision to be made.
+    """
+    model_band = measurement["model"]
+    served = model_band.get("served")
+    naive_published = measurement["naive"]["verdict"] == intervals.PUBLISHED
+
+    bundle: dict = {
+        "quantiles": measurement["quantiles"],
+        "nominal": measurement["nominal"],
+        "published": {"model": bool(served), "naive": naive_published},
+        "model": None,
+        "naive_offsets": {},
+    }
+    if served == "quantile":
+        bundle["model"] = {"kind": "quantile", **intervals.fit_final(feature_frame)}
+    elif served == "residual":
+        bundle["model"] = {"kind": "residual", "offsets": model_band["residual"]["offsets"]}
+    if naive_published:
+        bundle["naive_offsets"] = {
+            int(lead): record["offsets"]
+            for lead, record in measurement["naive"]["by_lead"].items()
+        }
+    return bundle
 
 
 def observation_freshness(pm25: pd.DataFrame, now: datetime) -> dict:
@@ -244,6 +274,21 @@ def train(station_id: int = config.PRIMARY_STATION_ID, now: datetime | None = No
           else "[train] no specialist band earns its hours — phase 0 policy stands alone")
     print(json.dumps(_lead_summary(policy), indent=2))
 
+    # Prediction intervals, and the check that decides whether either may be drawn. Three
+    # constructions against one bar: a point forecast invites belief in its second digit, and
+    # a band that covers 58% of hours while labelled 80% invites more of it, not less.
+    interval_measurement = intervals.measure(
+        feature_frame, pm25, winner, n_splits=config.CV_SPLITS
+    )
+    for name in ("quantile", "residual"):
+        band = interval_measurement["model"][name]
+        print(f"[train] interval ({name}): coverage {band['coverage']} against nominal "
+              f"{interval_measurement['nominal']}, width {band['width']} µg/m³ "
+              f"-> {band['verdict']}")
+    naive_band = interval_measurement["naive"]
+    print(f"[train] interval (naive, per lead): coverage {naive_band['coverage']} "
+          f"-> {naive_band['verdict']}")
+
     results, _ = model.run_experiment(feature_frame, model_name=winner)
     print("[train] results:")
     print(json.dumps(_loggable(results), indent=2))
@@ -255,6 +300,7 @@ def train(station_id: int = config.PRIMARY_STATION_ID, now: datetime | None = No
     fitted_specialists = _fit_specialists(pm25, weather_df, winner, policy.get("specialist_band"))
     if fitted_specialists:
         print(f"[train] fitted {len(fitted_specialists)} specialists for the served band")
+    interval_bundle = _fit_intervals(feature_frame, interval_measurement)
     path = model.save_model(
         final_model,
         list(x_all.columns),
@@ -270,9 +316,11 @@ def train(station_id: int = config.PRIMARY_STATION_ID, now: datetime | None = No
             "trained_rows": len(feature_frame),
             "target": config.TARGET_POLLUTANT,
             "data_freshness": freshness,
+            "intervals": interval_measurement,
         },
         policy=policy,
         specialists=fitted_specialists,
+        intervals=interval_bundle,
     )
     print(f"[train] saved model -> {path}")
     return results
@@ -499,7 +547,8 @@ def score_log(log_path: Path, station_id: int = config.PRIMARY_STATION_ID) -> di
     if not rows:
         print(f"[score-log] {log_path} holds no forecasts yet — nothing to grade")
         return {"scored_rows": 0, "pending_rows": 0, "period": None,
-                "by_lead": {}, "by_source": {}}
+                "by_lead": {}, "by_source": {},
+                "interval": {"n": 0, "covered": None, "by_source": {}}}
 
     conn = db.connect()
     try:
@@ -520,6 +569,14 @@ def score_log(log_path: Path, station_id: int = config.PRIMARY_STATION_ID) -> di
     if summary["by_lead"]:
         print("[score-log] by lead:")
         print(json.dumps(summary["by_lead"], indent=2))
+    coverage = summary.get("interval") or {}
+    if coverage.get("n"):
+        # The published band claimed a rate for hours that had not happened yet. This is the
+        # only place that claim meets them.
+        print(f"[score-log] published interval: {coverage['covered']} of "
+              f"{coverage['n']} banded hours covered, against a nominal "
+              f"{intervals.NOMINAL_COVERAGE}")
+        print(json.dumps(coverage["by_source"], indent=2))
     return summary
 
 

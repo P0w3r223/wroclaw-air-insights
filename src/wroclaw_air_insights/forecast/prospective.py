@@ -78,26 +78,38 @@ def forecast_rows(
     leads = forecast["lead"].astype(int)
     origins = stamps - pd.to_timedelta(leads, unit="h")
     model_name = metadata.get("model_name")
+    # The published band, where the page drew one. This is the only way the interval's claim
+    # can be tested on hours nobody had seen when it was made: cross-validated coverage is
+    # measured on rows that already existed, and an 80% band is a promise about the future.
+    lower = forecast["lower_pm25"] if "lower_pm25" in forecast else None
+    upper = forecast["upper_pm25"] if "upper_pm25" in forecast else None
 
     rows = []
-    for stamp, lead, origin, predicted, source in zip(
-        stamps, leads, origins, forecast["predicted_pm25"], forecast["source"]
+    for position, (stamp, lead, origin, predicted, source) in enumerate(
+        zip(stamps, leads, origins, forecast["predicted_pm25"], forecast["source"])
     ):
         if not np.isfinite(predicted):
             # A row the page would have printed as "n/a" is not a forecast to be graded on.
             continue
-        rows.append(
-            {
-                "station_id": int(station_id),
-                "issued_at": issued_at.isoformat(),
-                "origin": origin.strftime(TS_FORMAT),
-                "valid_time": stamp.strftime(TS_FORMAT),
-                "lead": int(lead),
-                "predicted_pm25": round(float(predicted), 1),
-                "source": str(source),
-                "model": model_name,
-            }
-        )
+        row = {
+            "station_id": int(station_id),
+            "issued_at": issued_at.isoformat(),
+            "origin": origin.strftime(TS_FORMAT),
+            "valid_time": stamp.strftime(TS_FORMAT),
+            "lead": int(lead),
+            "predicted_pm25": round(float(predicted), 1),
+            "source": str(source),
+            "model": model_name,
+        }
+        # Absent rather than null when no band was drawn: the log is read months later, and a
+        # row carrying `"lower": null` invites a reader to treat a withheld interval as a
+        # missing measurement instead of a decision.
+        if lower is not None and upper is not None:
+            low, high = lower.iloc[position], upper.iloc[position]
+            if np.isfinite(low) and np.isfinite(high):
+                row["lower_pm25"] = round(float(low), 1)
+                row["upper_pm25"] = round(float(high), 1)
+        rows.append(row)
     return rows
 
 
@@ -171,6 +183,20 @@ def score_log(rows: Iterable[dict], observations: pd.DataFrame) -> pd.DataFrame:
     frame["_ts"] = pd.to_datetime(frame["valid_time"])
     scored = frame.merge(truth, on="_ts", how="left").drop(columns="_ts")
     scored["error"] = scored["predicted_pm25"] - scored["observed_pm25"]
+
+    # Whether the published band contained the hour. NaN — not False — wherever no band was
+    # drawn or the hour is not yet measured, so "the interval missed" and "there was no
+    # interval" cannot average into the same figure.
+    for column in ("lower_pm25", "upper_pm25"):
+        if column not in scored:
+            scored[column] = np.nan
+    has_band = scored[["lower_pm25", "upper_pm25", "observed_pm25"]].notna().all(axis=1)
+    scored["covered"] = np.where(
+        has_band,
+        (scored["observed_pm25"] >= scored["lower_pm25"])
+        & (scored["observed_pm25"] <= scored["upper_pm25"]),
+        np.nan,
+    )
     return scored
 
 
@@ -197,6 +223,7 @@ def prospective_summary(scored: pd.DataFrame) -> dict:
             "period": None,
             "by_lead": {},
             "by_source": {},
+            "interval": _interval_coverage(graded),
         }
 
     stamps = pd.to_datetime(graded["valid_time"])
@@ -220,5 +247,29 @@ def prospective_summary(scored: pd.DataFrame) -> dict:
         "by_source": {
             str(source): {"n": int(len(group)), "mae": _mae(group["error"])}
             for source, group in graded.groupby("source")
+        },
+        # The one figure here that tests a *stated promise* rather than reporting a level. An
+        # 80% band is a claim about hours that had not happened when it was drawn, and this is
+        # the only place in the project where those hours arrive.
+        "interval": _interval_coverage(graded),
+    }
+
+
+def _interval_coverage(graded: pd.DataFrame) -> dict:
+    """Out-of-sample coverage of the published band, over the rows that carried one."""
+    if not len(graded) or "covered" not in graded:
+        return {"n": 0, "covered": None, "by_source": {}}
+    with_band = graded.dropna(subset=["covered"])
+    if not len(with_band):
+        return {"n": 0, "covered": None, "by_source": {}}
+    return {
+        "n": int(len(with_band)),
+        "covered": round(float(with_band["covered"].astype(float).mean()), 3),
+        "by_source": {
+            str(source): {
+                "n": int(len(group)),
+                "covered": round(float(group["covered"].astype(float).mean()), 3),
+            }
+            for source, group in with_band.groupby("source")
         },
     }

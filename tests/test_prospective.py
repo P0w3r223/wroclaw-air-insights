@@ -219,3 +219,87 @@ def test_a_revised_observation_regrades_the_forecast_rather_than_being_ignored()
     before = prospective.score_log(rows, first)["error"].iloc[0]
     after = prospective.score_log(rows, revised)["error"].iloc[0]
     assert after == pytest.approx(before - 10)
+
+
+# --- the published band, graded on hours nobody had seen ----------------------
+def _forecast_with_band(bands=((8.0, 12.0), (7.0, 13.0))):
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-08-08 08:00", periods=len(bands), freq="h"),
+            "lead": list(range(1, len(bands) + 1)),
+            "predicted_pm25": [10.0] * len(bands),
+            "source": ["naive"] * len(bands),
+            "lower_pm25": [low for low, _ in bands],
+            "upper_pm25": [high for _, high in bands],
+        }
+    )
+
+
+def test_the_log_records_the_band_the_page_drew():
+    # Cross-validated coverage is measured on rows that already existed. An 80% band is a
+    # promise about the future, and this is the only place those hours arrive.
+    rows = prospective.forecast_rows(
+        _forecast_with_band(), datetime(2026, 8, 8, 8, 0), {"model_name": "HGB"}
+    )
+    assert rows[0]["lower_pm25"] == 8.0
+    assert rows[0]["upper_pm25"] == 12.0
+
+
+def test_a_withheld_band_is_absent_from_the_row_rather_than_null():
+    # The log is read months later; `"lower_pm25": null` invites a reader to treat a withheld
+    # interval as a missing measurement instead of a decision not to publish one.
+    frame = _forecast_with_band(bands=((float("nan"), float("nan")),))
+    rows = prospective.forecast_rows(frame, datetime(2026, 8, 8, 8, 0), {})
+    assert "lower_pm25" not in rows[0]
+    assert "upper_pm25" not in rows[0]
+
+
+def test_a_forecast_frame_without_bands_still_logs():
+    frame = _forecast_with_band().drop(columns=["lower_pm25", "upper_pm25"])
+    rows = prospective.forecast_rows(frame, datetime(2026, 8, 8, 8, 0), {})
+    assert len(rows) == 2
+    assert "lower_pm25" not in rows[0]
+
+
+def _banded_observations(values):
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-08-08 08:00", periods=len(values), freq="h"),
+            "value": list(values),
+        }
+    )
+
+
+def test_coverage_counts_only_the_hours_that_carried_a_band():
+    # "The interval missed" and "there was no interval" must not average into one figure.
+    logged = prospective.forecast_rows(
+        _forecast_with_band(), datetime(2026, 8, 8, 8, 0), {}
+    )
+    logged.append({**logged[0], "lead": 3, "valid_time": "2026-08-08 10:00:00"})
+    logged[2].pop("lower_pm25")
+    logged[2].pop("upper_pm25")
+
+    scored = prospective.score_log(logged, _banded_observations([9.0, 30.0, 9.0]))
+    summary = prospective.prospective_summary(scored)
+
+    assert summary["interval"]["n"] == 2      # the third row had no band to grade
+    assert summary["interval"]["covered"] == 0.5  # 9.0 inside, 30.0 outside
+
+
+def test_coverage_is_reported_per_predictor_because_the_bands_are_different_objects():
+    rows = prospective.forecast_rows(_forecast_with_band(), datetime(2026, 8, 8, 8, 0), {})
+    rows[1]["source"] = "model"
+    summary = prospective.prospective_summary(
+        prospective.score_log(rows, _banded_observations([9.0, 9.0]))
+    )
+    assert set(summary["interval"]["by_source"]) == {"naive", "model"}
+
+
+def test_a_log_with_no_bands_at_all_reports_nothing_rather_than_zero_coverage():
+    frame = _forecast_with_band().drop(columns=["lower_pm25", "upper_pm25"])
+    rows = prospective.forecast_rows(frame, datetime(2026, 8, 8, 8, 0), {})
+    summary = prospective.prospective_summary(
+        prospective.score_log(rows, _banded_observations([9.0, 9.0]))
+    )
+    assert summary["interval"]["n"] == 0
+    assert summary["interval"]["covered"] is None

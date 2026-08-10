@@ -20,11 +20,13 @@ src/wroclaw_air_insights/
     horizon.py         # per-lead scoring and the serving policy (which predictor answers which hour)
     ab.py              # feature-idea A/B on shared rows and folds; the verdict rule for a gain
     specialists.py     # phase 1: a predictor per lead, the gate it must clear, the band it serves
+    intervals.py       # prediction bands, and the coverage check that gates each one
     prospective.py     # the forecast log: what was published, graded once the hours arrive
     serving.py         # live next-24h forecast from the saved bundle
   charts.py            # matplotlib figures as base64
   formatting.py        # the n/a gate every published number passes
   horizon_section.py   # the lead-axis section of the report
+  interval_section.py  # the interval section: what the band claims, and whether it held
   regime_section.py    # the clean/elevated split at the WHO reference level
   rejected_section.py  # what was measured and not shipped (a dated record, not recomputed)
   report.py            # page composition; _render_page is pure, generate_report does the I/O
@@ -57,6 +59,11 @@ These override convenience. Each one exists because the project already got it w
   (`specialists._clears`) — never their maximum, which would be chosen on the folds that then
   score it. These bars disagree on cases that occur here — do not collapse them into one
   function.
+- **A published claim carries the check that tests it.** An interval states a coverage rate,
+  so it ships only if measured coverage holds on held-out folds — on the average *and* fold by
+  fold (`intervals.verdict`). Measure more than one construction before publishing a null:
+  quantile regression missing here is a fact about quantile regression until a conformal band
+  has been measured beside it.
 - **A served range is a contiguous band, chosen once.** The naive prefix and the specialist
   band are each one decision (`horizon.crossover_lead`, `specialists.band`), not 24 argmins:
   per-lead selection would be a best-of-N on the same folds that produce the published
@@ -104,7 +111,7 @@ python -m wroclaw_air_insights.pipeline importance        # held-out importance 
 python -m wroclaw_air_insights.pipeline ab                # feature idea vs current set, paired
 python -m wroclaw_air_insights.pipeline specialists       # phase 1: per-lead predictors + gate
 python -m wroclaw_air_insights.pipeline predict           # live next-24h forecast
-python -m wroclaw_air_insights.pipeline score-log         # grade the published forecast log
+python -m wroclaw_air_insights.pipeline score-log         # grade the log, bands included
 python -m wroclaw_air_insights.report                     # build the Pages HTML
 ```
 

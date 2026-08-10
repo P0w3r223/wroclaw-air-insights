@@ -58,6 +58,13 @@ def forecast(forecast_df) -> str:
     fig, ax = plt.subplots(figsize=(10, 4))
     x, y = forecast_df["timestamp"], forecast_df["predicted_pm25"]
     ax.fill_between(x, y, color=ACCENT, alpha=0.08, zorder=1)
+    # The interval, over exactly the hours it was validated on. Rows whose band was withheld
+    # come through as NaN and matplotlib leaves them empty, which is the right picture: a gap
+    # in the shading is an honest statement that nothing here was checked.
+    lower, upper = forecast_df.get("lower_pm25"), forecast_df.get("upper_pm25")
+    if lower is not None and upper is not None and lower.notna().any():
+        ax.fill_between(x, lower, upper, color=ACCENT, alpha=0.16, zorder=2, linewidth=0,
+                        label="80% interval, where it passed its coverage check")
     ax.plot(x, y, color=ACCENT, lw=2.2, marker="o", markersize=5,
             markerfacecolor="white", markeredgecolor=ACCENT, zorder=3)
     # The page claims the model forecasts 24 hours. Over the earliest leads it does not —
