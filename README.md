@@ -243,9 +243,10 @@ src/wroclaw_air_insights/
   config.py  clean.py  db.py  pipeline.py
   report.py  charts.py  formatting.py                       # page composition
   horizon_section.py  regime_section.py  rejected_section.py  # its longer sections
+  interval_section.py                                         # and the coverage check
   ingest/    gios.py  weather.py
   forecast/  features.py  baseline.py  model.py  horizon.py  serving.py
-             ab.py  specialists.py  prospective.py        # measurement + the forecast log
+             ab.py  specialists.py  intervals.py  prospective.py   # measurement + the log
 notebooks/                  # 01_analysis.ipynb — EDA + figures
 tests/                      # pytest — cleaning, parsing, db, forecast, horizon, report,
                             #   the A/B harness, the per-lead specialists, the forecast log
@@ -277,7 +278,7 @@ python -m wroclaw_air_insights.pipeline compare    # baselines vs models + rolli
 python -m wroclaw_air_insights.pipeline importance # what each source of data is worth
 python -m wroclaw_air_insights.pipeline ab         # score a feature idea, paired fold by fold
 python -m wroclaw_air_insights.pipeline specialists # phase 1: a predictor per lead, and its gate
-python -m wroclaw_air_insights.pipeline score-log  # grade past forecasts against what happened
+python -m wroclaw_air_insights.pipeline score-log  # grade past forecasts, and their bands
 python -m wroclaw_air_insights.pipeline predict    # live next-24h PM2.5 forecast
 python -m wroclaw_air_insights.report              # build the HTML report
 
@@ -314,6 +315,12 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/01_analysis.ipynb
   chronologically-trained model's output, never the deployed all-data model's fit over
   days it learned from, with the naive rule plotted beside it.
 - **Explicit missing-data handling** — station gaps are treated, not ignored.
+- **An interval only where it passed a coverage check** — an 80% band claims 80% of measured
+  hours land inside it, which is falsifiable, so it is tested on held-out folds before it is
+  drawn and it has to hold on the average *and* in every period separately. Three constructions
+  are measured; the ones that miss are published as misses, with their numbers, rather than
+  quietly dropped. A range covering far fewer hours than its label promises is worse than no
+  range, because it reads as precision.
 - **A prospective log beside the retrospective metrics** — the published forecast is
   recorded before its hours exist and graded once they are measured, keyed on
   `(station, origin, lead)` so a workflow re-run cannot double-weight a day. What it

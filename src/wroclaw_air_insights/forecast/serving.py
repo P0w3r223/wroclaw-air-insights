@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import numpy as np
 import pandas as pd
 
 from wroclaw_air_insights import clean, config, db
-from wroclaw_air_insights.forecast import features, horizon, model
+from wroclaw_air_insights.forecast import features, horizon, intervals, model
 from wroclaw_air_insights.ingest import gios, weather
 
 # Weather history must span the deepest PM2.5 lag (168h = 7d) plus a buffer.
@@ -127,9 +128,47 @@ def predict_next_24h(station_id: int = config.PRIMARY_STATION_ID) -> pd.DataFram
             "predicted_pm25": bundle["model"].predict(x).round(1),
         }
     )
-    return horizon.apply_policy(
+    origin_reading = float(origin_value) if pd.notna(origin_value) else None
+    served = horizon.apply_policy(
         forecast,
-        float(origin_value) if pd.notna(origin_value) else None,
+        origin_reading,
         bundle.get("policy") or {},
         specialist_predictions(bundle, pm25, wx, origin),
+    )
+    return _attach_intervals(served, bundle, x, origin_reading)
+
+
+def _attach_intervals(
+    served: pd.DataFrame, bundle: dict, x: pd.DataFrame, origin_value: float | None
+) -> pd.DataFrame:
+    """Add the published bands, and only those — the verdict travels in the bundle.
+
+    Whether a band covers what it claims was decided at training time against the folds. This
+    reads that decision; it does not re-make it. A predictor whose band was withheld gets
+    ``NaN`` ends, which the page renders as "n/a" rather than as a number, so an hour whose
+    interval never passed a check cannot appear as though it had.
+    """
+    stored = bundle.get("intervals") or {}
+    if not stored:
+        return served
+
+    band = stored.get("model") or {}
+    bounds = None
+    if band.get("kind") == "quantile":
+        bounds = (
+            np.asarray(band["lower"].predict(model.align_features(x, band["feature_names"]))),
+            np.asarray(band["upper"].predict(model.align_features(x, band["feature_names"]))),
+        )
+    elif band.get("kind") == "residual":
+        point = served["predicted_pm25"].to_numpy(dtype=float)
+        low_off, high_off = band["offsets"]
+        bounds = (point + low_off, point + high_off)
+
+    return intervals.apply_to_forecast(
+        served,
+        bounds,
+        {int(lead): {"offsets": offsets}
+         for lead, offsets in (stored.get("naive_offsets") or {}).items()},
+        origin_value,
+        stored.get("published") or {},
     )
