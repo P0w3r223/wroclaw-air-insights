@@ -20,8 +20,10 @@ SQL database, an insights report, and a **24-hour PM2.5 forecast**.
    seasonality, exceedances of air-quality norms, and cross-pollutant/weather relations.
 4. **Forecast** — predicts PM2.5 24 hours ahead from time + weather features, compares
    several models against naive baselines (single split **and** rolling-origin CV), and
-   serves a **live next-24h forecast** from the saved bundle — which carries a per-lead
-   policy, so the early hours are answered by the naive rule wherever it wins the folds.
+   serves a **live next-24h forecast** from the saved bundle. The bundle carries a per-lead
+   policy and three predictors, because no single one wins the whole chart: the naive rule
+   answers the earliest hours, a predictor fitted for one specific lead answers a measured
+   middle band, and the 24-hour model answers the rest.
 5. **Publish** — a scheduled GitHub Actions job refreshes the data daily and deploys an
    HTML report (live forecast + air-quality index) to GitHub Pages.
 6. **Grade itself afterwards** — every forecast the page publishes is appended to an
@@ -295,12 +297,15 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/01_analysis.ipynb
 - **Comparisons judged on the paired per-fold difference**, not on the spread of MAE levels
   between folds — that spread is seasonal and common to every predictor, so testing against
   it would call this project's own headline a null result.
-- **Each lead served by the predictor that earns it, as one prefix decision** — the model
+- **Each lead served by the predictor that earns it, as two contiguous decisions** — the model
   cannot see the lead time, so its error is constant across the published chart while the naive
-  rule's is not. A lead goes to the model only on a strict majority of folds, ties included
-  against it, and the boundary is re-measured on every run rather than fixed in code. One
-  prefix rather than 24 independent choices, which would be a best-of-N on the folds that also
-  produce the published figures.
+  rule's is not, and a predictor fitted for one lead alone beats both over a middle range. A
+  lead goes to the model only on a strict majority of folds, ties included against it; it goes
+  to a specialist only by beating **both** the model and the naive rule separately on at least
+  four folds of five — never their maximum, which would be chosen on the same folds that then
+  score it. Both boundaries are re-measured on every run rather than fixed in code, and each
+  served range is contiguous rather than 24 independent choices, which would be a best-of-N on
+  the folds that also produce the published figures.
 - **Leakage-free inference** — training and live prediction share one feature contract:
   every feature is knowable at the forecast origin.
 - **Importance measured by removal, on held-out rows** — grouped, because near-duplicate
