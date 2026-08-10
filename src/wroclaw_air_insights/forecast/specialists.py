@@ -43,6 +43,18 @@ PASS = "pass"
 FAIL = "fail"
 
 
+def specialist_lags(lead: int) -> tuple[int, ...]:
+    """The lag set a predictor for this lead may legally use, as one definition.
+
+    ``pm25_lag_k`` is legal for lead ``l`` iff ``k >= l``, so the default set is already legal
+    everywhere and the specialist simply *adds* ``l`` — the observation in hand at the moment
+    of issue. Serving has to rebuild this exact set, and a second copy of the rule in the
+    serving path is precisely how a matrix that no longer matches its estimator gets built, so
+    the rule lives here and the bundle records what it returned.
+    """
+    return tuple(sorted(set((int(lead),) + features.DEFAULT_LAGS_H)))
+
+
 def specialist_features(
     pm25: pd.DataFrame, weather: pd.DataFrame, lead: int
 ) -> pd.DataFrame:
@@ -54,8 +66,9 @@ def specialist_features(
     24 the control: the specialist and the incumbent are then the same model, and any measured
     difference there is noise.
     """
-    lags = tuple(sorted(set((int(lead),) + features.DEFAULT_LAGS_H)))
-    return features.build_features(pm25, weather, horizon=int(lead), lags=lags)
+    return features.build_features(
+        pm25, weather, horizon=int(lead), lags=specialist_lags(lead)
+    )
 
 
 def _fold_mae(fold_predictions: list[dict]) -> list[float]:
@@ -164,3 +177,53 @@ def measure(
         for lead in leads
     ]
     return {"model": model_name, "by_lead": scored, "gate": gate(scored)}
+
+
+def band(scored: Sequence[dict], folds_required: int = FOLDS_REQUIRED) -> tuple[int, int] | None:
+    """The contiguous run of leads a specialist is allowed to serve, or ``None``.
+
+    The leads that clear the gate are not necessarily contiguous — on this station the
+    measured set runs 5–17 and then picks up isolated leads in the high teens and twenties.
+    Only an unbroken run is served, for the same reason phase 0 serves a *prefix* rather than
+    24 independent argmins: choosing per lead would be a best-of-N on the very folds that also
+    produce the published figures, and the page could not describe its own forecast in a
+    sentence if the served hours had holes in them.
+
+    Ties on length go to the **earlier** run, and that is a measured preference rather than an
+    arbitrary one: the specialist's advantage decays monotonically with the lead — it comes
+    from ``pm25_lag_l`` being fresher than ``pm25_lag_24``, and the two converge as ``l``
+    approaches 24 — so of two runs the same length, the earlier one is worth more.
+    """
+    ordered = sorted(scored, key=lambda record: record["lead"])
+    best: tuple[int, int] | None = None
+    run: list[int] = []
+
+    for record in ordered:
+        lead = int(record["lead"])
+        if not _clears(record, folds_required):
+            run = []
+            continue
+        run = [*run, lead] if run and lead == run[-1] + 1 else [lead]
+        # Strictly longer, so an equal-length later run never displaces an earlier one.
+        if best is None or len(run) > best[1] - best[0] + 1:
+            best = (run[0], run[-1])
+    return best
+
+
+def serving_record(result: dict, folds_required: int = FOLDS_REQUIRED) -> dict:
+    """Phase 1 reduced to what serving and the page need, gate included.
+
+    A failed gate returns ``band: None`` rather than the best run it could find. The gate is
+    the decision the roadmap committed to in advance — clear both references at a majority of
+    leads or publish the null — and picking a band out of a run that failed it would be
+    choosing the bar after seeing the numbers.
+    """
+    gate_result = result.get("gate") or {}
+    scored = result.get("by_lead") or []
+    served = band(scored, folds_required) if gate_result.get("verdict") == PASS else None
+    return {
+        "model": result.get("model"),
+        "gate": gate_result,
+        "band": list(served) if served else None,
+        "by_lead": {int(record["lead"]): record for record in scored},
+    }
