@@ -1130,3 +1130,97 @@ def test_horizon_section_stays_silent_rather_than_inventing_a_tally_it_lacks():
     horizon_meta["specialist"]["gate"] = {}
     html = report._horizon_section(_fresh_metadata(horizon=horizon_meta))
     assert "did not ship on" not in html
+
+
+# --- the interval section -----------------------------------------------------
+def _intervals(model_verdict="withheld", naive_verdict="published", grows=True):
+    return {
+        "quantiles": [0.1, 0.9],
+        "nominal": 0.8,
+        "tolerance": 0.05,
+        "spread_tolerance": 0.10,
+        "model": {
+            "quantile": {"coverage": 0.581, "width": 12.821,
+                         "fold_coverage": [0.517, 0.509, 0.593, 0.651, 0.638],
+                         "verdict": "withheld"},
+            "residual": {"coverage": 0.853, "width": 24.165,
+                         "fold_coverage": [0.7, 0.878, 0.922, 0.913],
+                         "verdict": model_verdict},
+            "served": "residual" if model_verdict == "published" else None,
+            "verdict": model_verdict,
+        },
+        "naive": {
+            "by_lead": {1: {"coverage": 0.797, "width": 11.28, "offsets": [-5.0, 6.0]}},
+            "coverage": 0.762, "width_grows_with_lead": grows, "verdict": naive_verdict,
+        },
+    }
+
+
+def test_interval_section_publishes_the_check_beside_the_band():
+    html = report.interval_section.render(_fresh_metadata(intervals=_intervals()))
+    assert "Measured coverage" in html
+    assert "58%" in html   # the quantile construction, listed although it failed
+    assert "76%" in html   # the naive one, which passed
+    assert "80% of measured hours land inside it" in html
+
+
+def test_interval_section_lists_the_constructions_that_failed_not_only_the_one_that_shipped():
+    # A null published against one implementation, with the alternatives unmeasured or
+    # unmentioned, is a claim about that implementation dressed up as a claim about the problem.
+    html = report.interval_section.render(_fresh_metadata(intervals=_intervals()))
+    assert "quantile regression" in html
+    assert "band from its own held-out errors" in html
+    assert html.count("withheld") >= 2
+
+
+def test_interval_section_says_plainly_when_nothing_is_drawn():
+    html = report.interval_section.render(
+        _fresh_metadata(intervals=_intervals(model_verdict="withheld", naive_verdict="withheld"))
+    )
+    assert "No band is drawn on the chart above" in html
+    assert "worse than no range" in html
+
+
+def test_interval_section_names_the_spread_that_disqualified_a_band():
+    # Missing on the average and missing on consistency are different failures, and the second
+    # is the one a reader would not guess from a single number.
+    html = report.interval_section.render(_fresh_metadata(intervals=_intervals()))
+    assert "ranges from 70% to 92%" in html
+    assert "at 85% on average" in html
+
+
+def test_interval_section_states_the_measured_direction_of_the_naive_width():
+    grew = report.interval_section.render(_fresh_metadata(intervals=_intervals(grows=True)))
+    flat = report.interval_section.render(_fresh_metadata(intervals=_intervals(grows=False)))
+    assert "<strong>does</strong> widen" in grew
+    assert "does <strong>not</strong> widen" in flat
+
+
+def test_interval_section_renders_nothing_when_no_interval_was_measured():
+    assert report.interval_section.render(_fresh_metadata()) == ""
+    assert report.interval_section.render({}) == ""
+
+
+def test_interval_section_never_prints_a_bare_nan():
+    broken = _intervals()
+    broken["model"]["residual"]["coverage"] = float("nan")
+    broken["naive"]["coverage"] = None
+    html = report.interval_section.render(_fresh_metadata(intervals=broken))
+    assert re.search(r"\bnan\b", html) is None
+    assert "n/a" in html
+
+
+def test_interval_section_does_not_call_a_failed_average_close():
+    # The quantile band missed on its average (58% against a nominal 80%). Telling the reader
+    # its average "nearly passed" would be a claim the column beside it refutes; the sentence
+    # belongs only to a band that really did come close and failed on consistency.
+    html = report.interval_section.render(_fresh_metadata(intervals=_intervals()))
+    assert html.count("The nearest miss is") == 1
+    assert "51% to 65%" not in html   # the quantile band missed by far more; it is not nearest
+    assert "70% to 92%" in html       # the residual band's spread is the informative one
+
+
+def test_interval_section_reads_the_article_off_the_number():
+    html = report.interval_section.render(_fresh_metadata(intervals=_intervals()))
+    assert "an 80% band" in html
+    assert "a 80%" not in html

@@ -28,8 +28,9 @@ MODEL_FILENAME = "pm25_forecaster.joblib"
 # Bundle layout version. Bumped when a bundle gains something a reader cannot do without
 # — schema 2 added the per-lead serving policy, which is measured, not derivable; schema 3
 # added the per-lead specialist estimators, which are fitted, and which a serving path cannot
-# reconstruct from the incumbent at all.
-BUNDLE_SCHEMA = 3
+# reconstruct from the incumbent at all; schema 4 added the prediction intervals and, more to
+# the point, the coverage verdict that says which of them may be drawn.
+BUNDLE_SCHEMA = 4
 # How many column names to name before the message stops being readable.
 _MISMATCH_PREVIEW = 6
 # Two predictors closer than this on a fold are tied, not separated. Anchored on the
@@ -492,15 +493,26 @@ def select_model(
     }
 
 
-def fold_indices(n_rows: int, n_splits: int = config.CV_SPLITS) -> list[np.ndarray]:
-    """Test-row positions for each rolling-origin fold, as one shared definition.
+def fold_splits(
+    n_rows: int, n_splits: int = config.CV_SPLITS
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """``(train, test)`` row positions for each rolling-origin fold — the one definition.
 
     Every cross-validated figure on the page has to come from the same folds, or the
     comparisons between them are not comparisons at all. This used to be two independent
     ``TimeSeriesSplit`` objects that agreed by coincidence of matching arguments.
+
+    Both halves are returned because some measurements need the training rows too: an
+    interval whose quantiles are taken on the rows that then score it reports its nominal
+    rate back by construction.
     """
     splitter = TimeSeriesSplit(n_splits=n_splits)
-    return [test_idx for _, test_idx in splitter.split(np.arange(n_rows))]
+    return list(splitter.split(np.arange(n_rows)))
+
+
+def fold_indices(n_rows: int, n_splits: int = config.CV_SPLITS) -> list[np.ndarray]:
+    """Test-row positions for each rolling-origin fold."""
+    return [test_idx for _, test_idx in fold_splits(n_rows, n_splits)]
 
 
 def paired_delta(
@@ -646,6 +658,7 @@ def save_model(
     models_dir: Path = config.MODELS_DIR,
     policy: dict | None = None,
     specialists: dict[int, dict] | None = None,
+    intervals: dict | None = None,
 ) -> Path:
     """Persist a trained model with its feature order, serving policy and metadata (joblib).
 
@@ -663,6 +676,11 @@ def save_model(
     that re-derived the lag rule from the lead would be a second definition of the contract,
     free to drift away from the one the estimator was actually fitted on.
 
+    ``intervals`` carries the prediction bands **and the verdict that permits them**. The
+    verdict travels with the estimators rather than being re-derived by the serving path, for
+    the same reason the policy does: whether a band covers what it claims is a measurement, and
+    a serving path that decided it locally would be deciding it without the folds.
+
     This is the authoritative copy. ``metadata["horizon"]`` holds the same policy dict for
     readers that take only the metadata — the report does — and neither may be written
     without the other.
@@ -676,6 +694,7 @@ def save_model(
             "feature_names": list(feature_names),
             "policy": policy or {},
             "specialists": {int(lead): entry for lead, entry in (specialists or {}).items()},
+            "intervals": intervals or {},
             "metadata": metadata or {},
         },
         path,
@@ -735,9 +754,9 @@ def load_model(models_dir: Path = config.MODELS_DIR) -> dict:
     if schema != BUNDLE_SCHEMA:
         raise BundleSchemaError(
             f"The bundle at {path} is schema {schema!r}, but this version reads "
-            f"{BUNDLE_SCHEMA}. It predates the per-lead specialists and the serving policy "
-            f"that places them — one is fitted at training time and the other measured "
-            f"there, and neither can be reconstructed from a saved model — retrain with "
-            f"`python -m wroclaw_air_insights.pipeline train`."
+            f"{BUNDLE_SCHEMA}. It predates the prediction intervals, the per-lead "
+            f"specialists, or the serving policy that places them — each is fitted or "
+            f"measured at training time and none can be reconstructed from a saved model — "
+            f"retrain with `python -m wroclaw_air_insights.pipeline train`."
         )
     return bundle
