@@ -596,3 +596,36 @@ def test_the_two_fold_producers_agree_on_the_same_rows():
     assert len(from_predictions) == len(from_indices)
     for predicted, expected in zip(from_predictions, from_indices):
         assert np.array_equal(predicted, expected)
+
+
+def test_a_saved_bundle_carries_each_specialist_with_the_recipe_it_was_fitted_on(tmp_path):
+    # The estimator alone is not enough to serve: a specialist for lead l was fitted on a
+    # matrix built with horizon=l and lags floored at l, so the bundle has to say which. A
+    # serving path that re-derived the rule would be a second copy of the contract.
+    pm25, weather = _make_data(400)
+    frame = features.build_features(pm25, weather, horizon=5, lags=(5, 24, 48, 168))
+    x, y = features.split_xy(frame)
+    fitted = model.train_forecaster(x, y)
+
+    model.save_model(
+        fitted, list(x.columns), models_dir=tmp_path, policy={"specialist_band": [5, 5]},
+        specialists={5: {"model": fitted, "feature_names": list(x.columns),
+                         "lags": [5, 24, 48, 168]}},
+    )
+    bundle = model.load_model(models_dir=tmp_path)
+
+    assert bundle["specialists"][5]["lags"] == [5, 24, 48, 168]
+    assert "pm25_lag_5" in bundle["specialists"][5]["feature_names"]
+    assert np.allclose(
+        bundle["specialists"][5]["model"].predict(x.head(3)), fitted.predict(x.head(3))
+    )
+
+
+def test_a_bundle_with_no_specialists_is_still_a_valid_bundle(tmp_path):
+    # A gate that fails ships no specialists, and that is a result to publish rather than a
+    # broken bundle — the phase 0 policy stands alone and the page still builds.
+    pm25, weather = _make_data(400)
+    x, y = features.split_xy(features.build_features(pm25, weather))
+    model.save_model(model.train_forecaster(x, y), list(x.columns), models_dir=tmp_path)
+
+    assert model.load_model(models_dir=tmp_path)["specialists"] == {}

@@ -1,9 +1,10 @@
 # Report roadmap — making the Pages report speak to a non-technical reader
 
 Date: 2026-08-06
-Status: draft — fourth revision (item 5 phase 1 **measured**, gate passed, serving not shipped;
-item 7's forecast log **live** since 2026-08-08 and grading itself daily; both published nulls
-re-measured under the paired rule that replaced the retracted fold-spread test; item 14 dropped)
+Status: draft — fourth revision (item 5 **complete**: phase 1 measured, gated and now served on
+a re-measured band, bundle schema 3; item 7's forecast log **live** since 2026-08-08 and grading
+itself daily; both published nulls re-measured under the paired rule that replaced the retracted
+fold-spread test; item 14 dropped)
 Author: P0w3r223 + Claude
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
@@ -585,8 +586,9 @@ therefore not obviously the right one — see the entry itself.
 
    ### Phase 1 — measured, and the gate clears
 
-   *`forecast/specialists.py`, `pipeline specialists`. This is the **measurement**; serving is
-   a separate change and nothing on the page moves yet.*
+   *`forecast/specialists.py`, `pipeline specialists`. This entry is the **measurement**, and it
+   is kept as it was written — when it landed, serving was a separate change and nothing on the
+   page moved. That change has since shipped; see "Phase 1 — served" below.*
 
    **The gate had to be reformulated before anything could be measured against it.** As written
    above it compares the specialist to `max(today's model, naive)` — but that max is taken over
@@ -653,6 +655,139 @@ therefore not obviously the right one — see the entry itself.
    a per-lead selection path, a schema break, and a report that can describe three bands rather
    than two. That is the next change, and it should be sequenced with item 6 in mind — a
    specialist per lead is also what makes per-lead prediction intervals cheap.
+
+   ### Phase 1 — served
+
+   *Bundle **schema 3**, `horizon.serving_policy` on three sources, `serving.specialist_predictions`,
+   and a third band on the page. The measurement above did not move; what changed is that it now
+   decides what a reader sees.*
+
+   **The band is re-measured every run, which is what made this expensive rather than hard.**
+   Which leads a specialist earns moves with the data exactly as the crossover does, so the
+   band the page publishes has to be the band that run measured — this document's own rule
+   against asserting a movable decision as a number. That puts the full phase 1 measurement
+   inside `train`: ~10 fits per lead, 24 leads, **~80 s locally on 12 cores**, and it is now the
+   most expensive step in the command. Accepted rather than cached, because a cached band is a
+   number in a file that no longer has a measurement behind it.
+
+   **The one decision the measurement did not settle: what happens where the two bands
+   overlap.** They do overlap — this is not hypothetical. The crossover falls at 6 and the band
+   starts at 5, so leads 5 and 6 are claimed by both phase 0 (naive) and phase 1 (specialist).
+   The bars are not equally strong, and that is what resolves it. The prefix rule only asks that
+   the *incumbent* fail to win a majority of folds against the naive rule — it is a bar the
+   incumbent fails, not one the naive rule passes. The gate asks the specialist to beat both
+   references **separately** on ≥4 folds of 5, which includes beating the naive rule on those
+   very hours. Leaving them to the naive rule would let the weaker measurement overrule the
+   stronger one on the same hours, so the band wins and the naive prefix shrinks to what is
+   below it. A specialist never takes an hour from the naive rule without having beaten it there.
+
+   On the window phase 1 was measured on — 8 584 rows ending 2026-07-17 — the policy comes out
+   in three bands, and the overlap is visible in it: the crossover is 6, the band starts at 5,
+   so the naive rule keeps 1–4 rather than 1–6.
+
+   | Hours | Served by | Why that predictor |
+   |-------|-----------|--------------------|
+   | +1 h → +4 h | the reading at issue | the model loses outright; the specialist does too |
+   | +5 h → +17 h | a specialist per lead | beat both references on ≥4 folds of 5, every hour |
+   | +18 h → +24 h | the 24-hour model | the specialist's edge has decayed into it |
+
+   Thirteen estimators, each stored with the lag set it was fitted on, take the bundle from
+   ~0.4 MB to **5.5 MB**. Storing the lag set is not redundancy: a specialist for lead `l` was
+   trained on a matrix built with `horizon=l` and lags floored at `l`, and a serving path that
+   re-derived that rule from the lead would be a second copy of the contract, free to drift
+   from the one the estimator actually saw. The bundle records the recipe; serving reads it back.
+
+   ### And then the gate failed — which is the most important result in this entry
+
+   *The table above is not what the project serves today. It is what the phase 1 window
+   produced, and it is kept because the contrast is the finding.*
+
+   Re-running the whole thing on data ingested **twenty-four days later** — 8 558 rows ending
+   2026-08-10, the same station, the same code, the same bar:
+
+   | Window ends | Rows | Leads clearing the gate | Verdict | Band served |
+   |-------------|-----:|:-----------------------:|:-------:|:-----------:|
+   | 2026-07-17 | 8 584 | **16** of 24 | pass | +5 h → +17 h |
+   | 2026-08-10 | 8 558 | **7** of 24 | **fail** | none |
+
+   **Phase 1's headline does not replicate.** It was measured once, on one window, and reported
+   as a pass with 16 leads clearing against 13 needed — a comfortable-looking margin. Three
+   weeks of fresher data and the same measurement clears 7. Nothing about the mechanism changed;
+   the mechanism was never the uncertain part. What moved is an estimate made on five folds of
+   one year of a single station, and the honest reading of the two runs together is that phase
+   1's gain is somewhere around the bar rather than clearly above it.
+
+   **This is the outcome the design was built for, and it is worth being precise about why.**
+   The roadmap fixed the bar *before* the measurement and wrote down what a failure would mean:
+   "or the null gets published and phase 0 stands alone". Because the band is re-measured on
+   every run rather than written into the code, the failing run did what the passing run would
+   have done in reverse — it published the null, served the two-band policy, and said so on the
+   page. Had the band been hardcoded from the passing run, the project would today be serving
+   thirteen specialists on a station where its own gate no longer clears, with a page asserting
+   they earned it.
+
+   **What ships is therefore the machinery plus the gate, not the band.** That is a weaker claim
+   than "specialists improve the forecast" and it is the one the evidence supports. The page
+   states the null in the same place it would have stated the band, with the tally that produced
+   it, because a column of specialist figures sitting beside no sentence invites a reader to
+   draw the conclusion the run declined to draw.
+
+   *One caveat on the comparison itself, since it is a comparison this document would demand of
+   anything else.* The two runs differ in more than their end date: the later window drops the
+   oldest three weeks as well as adding the newest, so this is not "the same data plus more". It
+   is the same *procedure* on the window the pipeline would actually have used on each day, which
+   is the quantity that matters for a system that retrains daily — but it is not a controlled
+   experiment on window length, and no claim here rests on which of the two effects dominates.
+
+   **Both replacements degrade to the incumbent, and the label degrades with them.** A naive
+   hour needs an origin observation and a specialist hour needs its own matrix to assemble;
+   thirteen estimators are thirteen chances for one hour to be unbuildable on a station gap.
+   Falling back to the model is right — a published page beats a uniform one — but publishing
+   the model's answer under a *label* naming a predictor that did not produce it is the one
+   failure the `source` column exists to prevent, so the row is relabelled, not just refilled.
+
+   ### The verification found a live defect in the serving path, and it had nothing to do with specialists
+
+   Running `predict` against the fresh bundle printed **every lead as model-served**, while
+   `train` had just announced that the naive rule serves leads 1–4. The policy was correct and
+   the serving path was quietly discarding it.
+
+   The cause is one line and it predates this change. `clean` reindexes PM2.5 onto a continuous
+   hourly grid and interpolates only *interior* gaps, so a series whose newest slot has been
+   published-but-empty ends in `NaN`. `predict_next_24h` took the origin as
+   `pm25["timestamp"].max()` — the last hour on the *grid*, not the last hour with a *reading*.
+   Three things then went wrong at once, none of them visibly:
+
+   - every naive-served lead degraded to the model, because there was no reading to repeat, so
+     **the entire phase 0 policy stopped applying** with nothing saying so;
+   - the leads were numbered from an hour that does not exist as an observation, so "+1 h" was
+     really +2 h;
+   - the page's freshness note derives the anchor back out of `timestamp - lead`, so it would
+     have named an empty hour as "the reading" the forecast is built on — a false sentence on
+     the published page, which is the one thing this project's rules forbid outright.
+
+   The origin is now the newest hour that actually has a value, and the history is truncated
+   there so the trailing empty slots cannot collide with the future hours the inference builder
+   appends. Nothing is lost: every feature is by construction knowable at the origin.
+
+   **The forecast log had already recorded this happening in production, and it was misread.**
+   The 2026-08-09 entry has 23 rows and not one naive-served hour, which the log entry above
+   reads as "the naive prefix collapsed to zero — the boundary is re-measured every run and one
+   run put it at the very start". That explanation is wrong. It is this defect: an empty newest
+   slot, every naive hour degrading to the model, and a missing row at the far end. The log
+   found a real fault three days before anyone went looking, and the first reading of it
+   attributed the fault to the thing the log was built to measure.
+
+   **The change surfaced one more defect, and that one was in a sentence rather than in the code.**
+   The section's opening claims the model's error line is flat, which is true in the sense that
+   matters — the lead is not an input. Adding the band edges to the printed table put +17 h on
+   the page at **6.96** beside +24 h at **6.97**, so the page asserted "the same error at every
+   hour" directly above a column that visibly disagreed. The cause is real and small: a lead
+   whose origin reading is missing drops that hour from every predictor at once, so the mean is
+   taken over slightly different rows. The page now says so **only when the rows it printed
+   actually differ** — explaining a discrepancy the reader cannot see would be its own kind of
+   noise. This is the fourth review round in this project to find the same defect class, and the
+   first where the trigger was a *new row* rather than new prose.
 
 6. **Prediction intervals.** sklearn ≥1.5 is pinned, so
    `HistGradientBoostingRegressor(loss="quantile")` is two extra fits — but on RF it needs
@@ -741,12 +876,19 @@ therefore not obviously the right one — see the entry itself.
      Worth knowing before any section is written that assumes 24 — and worth resolving in the
      log itself, since "we published nothing for that hour" and "we published a number" are
      different events and only one of them is currently visible.
-   - **The naive prefix collapsed to zero on one of the three days.** Naive served 5 leads on
-     08-08 and 4 on 08-10, and **none at all** on 08-09 — the boundary is re-measured on every
-     retrain, and one run put it at the very start. That the crossover moves was expected and is
-     stated on the page; that it can vanish for a day is the first evidence of how far it moves.
-     A log long enough to give the *distribution* of that boundary is more informative than any
-     single run's value, and nothing else in the project can produce it.
+   - **The naive prefix served nothing on one of the three days.** Naive served 5 leads on
+     08-08 and 4 on 08-10, and **none at all** on 08-09.
+
+     *This entry first read that as the boundary moving — "re-measured every retrain, and one
+     run put it at the very start" — and that was wrong.* The 08-09 row has the other symptom
+     beside it, 23 leads instead of 24, and the two have one cause: the origin landed on a
+     published-but-empty hour, so there was no reading to repeat and every naive lead degraded
+     to the model. Found while verifying the specialist serving change, fixed there, and written
+     up under "Phase 1 — served". The correction is the point worth keeping: **the log caught a
+     production fault three days before anyone went looking, and the first thing done with the
+     evidence was to explain it as the phenomenon the log exists to measure.** A prospective
+     record is only as good as the willingness to read it as a fault report rather than as a
+     result.
 
 8. **Health context** — translate µg/m³ into what it means for a runner or someone with
    asthma. Low technical signal, real product signal.

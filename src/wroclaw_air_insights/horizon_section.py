@@ -15,7 +15,7 @@ from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
 from wroclaw_air_insights.formatting import number as _number
 
 
-def lead_row(record: dict, served_by: str) -> str:
+def lead_row(record: dict, served_by: str, specialist_mae: float | None = None) -> str:
     """One lead's line in the horizon table, with the paired fold count beside the means."""
     delta = record.get("delta") or {}
     wins, folds = delta.get("model_wins"), delta.get("n_folds")
@@ -33,12 +33,112 @@ def lead_row(record: dict, served_by: str) -> str:
     return f"""    <tr>
       <td>+{record.get('lead')} h</td>
       <td>{_fmt(record.get('model_mae'))}</td>
+      <td>{_fmt(specialist_mae)}</td>
       <td>{_fmt(record.get('naive_mae'))}</td>
       <td>{shown_delta}</td>
       <td>{tally}</td>
       <td>{served_by}</td>
     </tr>
 """
+
+
+def _flatness_caveat(scored: dict, shown: list[int]) -> str:
+    """Say why the "flat" column is not printing one identical number, when it is not.
+
+    The model's error across leads is exactly constant in the sense that matters — the lead
+    is not an input, so the row for +1 h and the row for +24 h at the same valid time are the
+    same row. What is *not* constant is which rows can be scored: a lead whose origin
+    observation is missing drops that hour from both predictors, so the mean is taken over a
+    slightly different set and the printed figure can move by a hundredth.
+
+    Rendered only when the rows on the page actually disagree. Stating the caveat where the
+    column reads 6.97 six times would be explaining a discrepancy the reader cannot see, and
+    omitting it where the column reads 6.97 and 6.96 is the defect this project keeps
+    catching — a sentence its neighbouring number refutes.
+    """
+    printed = {
+        round(value, 2)
+        for value in (_number((scored.get(lead) or {}).get("model_mae")) for lead in shown)
+        if value is not None
+    }
+    if len(printed) < 2:
+        return ""
+    return (
+        " Where the column below still moves by a hundredth, that is the scoring set rather "
+        "than the model: a lead whose origin reading is missing drops that hour from every "
+        "predictor at once, so the average is taken over slightly different hours."
+    )
+
+
+def _last_naive_lead(policy: dict, crossover: int) -> int:
+    """The last hour the naive rule actually keeps, which is not always the crossover.
+
+    Phase 0 hands the naive rule every lead up to the crossover; phase 1's specialist band
+    then takes back any of those hours it was measured to win. So the served naive run ends
+    where the band begins, and a sentence that quoted the crossover instead would name an
+    hour the table beside it shows being served by something else.
+    """
+    band = policy.get("specialist_band")
+    return min(crossover, int(band[0]) - 1) if band else crossover
+
+
+def _gate_shape(policy: dict) -> tuple[dict, int | None]:
+    """The gate the run applied, and how many folds it applied it over."""
+    specialist = policy.get("specialist") or {}
+    gate = specialist.get("gate") or {}
+    n_folds = None
+    for record in (specialist.get("by_lead") or {}).values():
+        n_folds = (record.get("vs_naive") or {}).get("n_folds")
+        break
+    return gate, n_folds
+
+
+def _specialist_note(policy: dict, crossover: int) -> str:
+    """What the middle band is, and what it had to clear to get those hours.
+
+    When nothing cleared, this says so rather than going quiet. The column of specialist
+    figures is on the page either way — it is the evidence — and a column of numbers with no
+    sentence beside it invites the reader to draw their own conclusion from a comparison the
+    run explicitly declined to act on.
+    """
+    band = policy.get("specialist_band")
+    gate, n_folds = _gate_shape(policy)
+    if not band:
+        clearing, measured = gate.get("leads_clearing"), gate.get("leads_measured")
+        needed = gate.get("majority_needed")
+        if not all(isinstance(v, int) for v in (measured, needed)) or clearing is None:
+            return ""
+        return f"""<p class="hint">The specialist column is a measurement that did not ship on
+  this run. Only {len(clearing)} of the {measured} leads beat both of the other predictors by
+  enough to earn their hours, against the {needed} the decision required, so the forecast is
+  served by the two predictors above and this run publishes the null. The bar is fixed and the
+  measurement is repeated on every retrain, so what this column says can change with the
+  training window — which is exactly what a bar set in advance is for.</p>"""
+
+    start, end = int(band[0]), int(band[1])
+    folds_required = gate.get("folds_required")
+
+    bar = (
+        f" Every hour in that range beat <em>both</em> of the other two predictors on at least "
+        f"{folds_required} of {n_folds} rolling folds — not the better of the two, which would "
+        f"have let the range be chosen after the fact, but each of them separately."
+        if isinstance(folds_required, int) and isinstance(n_folds, int)
+        else ""
+    )
+    # Only claimed when the two measured boundaries actually overlap, because they need not:
+    # a band starting above the crossover takes nothing from the naive rule.
+    reclaimed = (
+        " Some of those hours are ones the naive rule would otherwise have kept — a specialist "
+        "takes an hour from it only by beating it there."
+        if crossover >= start
+        else ""
+    )
+    return f"""<p class="hint">From +{start} h to +{end} h the forecast comes from a predictor
+  fitted for <em>that lead alone</em>. It is the same algorithm on the same data, with one
+  difference that matters: at a {start}-hour lead it may use the reading from {start} hours
+  ago, while the model above is trained on the 24-hour task and its freshest input is a full
+  day old.{bar}{reclaimed} The advantage shrinks as the lead grows — by +24 h the two have the
+  same input and are the same forecast, which is the row to check this claim against.</p>"""
 
 
 def served_note(policy: dict, scored: dict, crossover: int) -> str:
@@ -50,16 +150,22 @@ def served_note(policy: dict, scored: dict, crossover: int) -> str:
     blunt version and be contradicted by the table directly above it.
     """
     naive_label = policy.get("naive_label") or horizon.ORIGIN_PERSISTENCE_LABEL
-    if not crossover:
-        return """<p class="hint">The model beats the naive rule at every lead on this chart,
-  including the first hour — so every published hour is model-served.</p>"""
+    naive_end = _last_naive_lead(policy, crossover)
+    specialist = _specialist_note(policy, crossover)
 
-    plural = "s" if crossover > 1 else ""
+    if not naive_end:
+        opening = (
+            """<p class="hint">The naive rule keeps no hour on this chart — every published
+  hour is answered by a fitted predictor.</p>"""
+        )
+        return f"{opening}\n  {specialist}" if specialist else opening
+
+    plural = "s" if naive_end > 1 else ""
     opening = (
-        f"""<p class="hint">For the first {crossover} hour{plural} the published forecast is
+        f"""<p class="hint">For the first {naive_end} hour{plural} the published forecast is
   the naive rule itself — “{naive_label}”."""
     )
-    boundary = scored.get(crossover) or {}
+    boundary = scored.get(naive_end) or {}
     delta = boundary.get("delta") or {}
     mean, wins = _number(delta.get("mean")), delta.get("model_wins")
     folds = delta.get("n_folds")
@@ -67,11 +173,12 @@ def served_note(policy: dict, scored: dict, crossover: int) -> str:
     if mean is None or mean <= 0 or not isinstance(wins, int) or not isinstance(folds, int):
         return f"""{opening} Over that range the model is measurably worse than repeating the
   current reading, so serving a model there would look more sophisticated and be less
-  accurate.</p>"""
+  accurate.</p>
+  {specialist}"""
 
     # Only claim the earlier leads are outright losses if they actually are — a lead below
-    # the crossover can be ahead on the mean too, and one of them is always in the table.
-    earlier = [scored[lead] for lead in sorted(scored) if lead < crossover]
+    # the boundary can be ahead on the mean too, and one of them is always in the table.
+    earlier = [scored[lead] for lead in sorted(scored) if lead < naive_end]
     outright = earlier and all(
         (_number((record.get("delta") or {}).get("mean")) or 0) <= 0 for record in earlier
     )
@@ -80,10 +187,11 @@ def served_note(policy: dict, scored: dict, crossover: int) -> str:
         if outright
         else "At"
     )
-    return f"""{opening} {lead_in} hour {crossover} the model is ahead on average
+    return f"""{opening} {lead_in} hour {naive_end} the model is ahead on average
   ({mean:+.2f} µg/m³) but holds that lead in only {wins} fold{'s' if wins != 1 else ''} of
   {folds}. An average that survives {wins} period{'s' if wins != 1 else ''} in {folds} is not
-  enough to hand it the hour.</p>"""
+  enough to hand it the hour.</p>
+  {specialist}"""
 
 
 def render(metadata: dict) -> str:
@@ -102,46 +210,56 @@ def render(metadata: dict) -> str:
     naive_mae = [_number(scored[lead].get("naive_mae")) for lead in leads]
     if len(leads) < 2 or any(value is None for value in model_mae + naive_mae):
         return ""
-    chart = charts.lead_curve(leads, model_mae, naive_mae, crossover)
+    band = policy.get("specialist_band")
+    by_lead = ((policy.get("specialist") or {}).get("by_lead")) or {}
+    specialist_mae = [_number((by_lead.get(lead) or {}).get("specialist_mae")) for lead in leads]
+    chart = charts.lead_curve(leads, model_mae, naive_mae, crossover, specialist_mae, band)
     # The first and last lead always, plus the interior ones config names: 24 rows would be
-    # near-identical numbers, and the chart already carries the full curve. The crossover is
-    # in there too — the note below quotes its figures and invites the reader to check them,
-    # so the row has to exist whatever lead the daily retrain lands on.
+    # near-identical numbers, and the chart already carries the full curve. Every boundary the
+    # prose below names is in there too — the note quotes their figures and invites the reader
+    # to check them, so those rows have to exist whatever the daily retrain lands on.
+    boundaries = (crossover, *(band or ()))
     shown = sorted(
         {
             lead
-            for lead in (leads[0], *config.REPORT_LEAD_ROWS, crossover, leads[-1])
+            for lead in (leads[0], *config.REPORT_LEAD_ROWS, *boundaries, leads[-1])
             if lead in scored
         }
     )
     rows = "".join(
-        lead_row(scored[lead], policy.get("leads", {}).get(lead, "model"))
+        lead_row(
+            scored[lead],
+            policy.get("leads", {}).get(lead, "model"),
+            _number((by_lead.get(lead) or {}).get("specialist_mae")),
+        )
         for lead in shown
     )
     served = served_note(policy, scored, crossover)
     naive_elsewhere = baseline.LABELS["persistence"]
+    flat = _flatness_caveat(scored, shown)
 
     return f"""  <h3>How far ahead, and what that costs</h3>
   <img src="data:image/png;base64,{chart}" alt="Forecast error against lead time">
-  <p>The model is trained on one task — predict 24 hours ahead — and the lead time is not
-  one of its inputs, so its error is <em>the same</em> at every hour of the chart above.
-  The reference it has to beat is not: “the air will stay as it is now” is a strong forecast
-  one hour out and a weak one a day out. The single error figure this page headlines
-  therefore describes the 24-hour task; the chart above is what it looks like at every
-  other lead.</p>
+  <p>The main model is trained on one task — predict 24 hours ahead — and the lead time is
+  not one of its inputs, so <em>its</em> line is flat: the same error at every hour of the
+  chart above.{flat} Neither of the other two is. “The air will stay as it is now” is a strong
+  forecast one hour out and a weak one a day out, and a predictor fitted for a single lead
+  gets a fresher reading to work from the closer that lead is. The single error figure this
+  page headlines therefore describes the 24-hour task, and the chart above is why no one
+  figure could describe the rest.</p>
   <table class="metrics">
     <thead>
-      <tr><th>Lead</th><th>Model MAE ↓</th><th>Naive MAE ↓</th><th>Paired Δ</th>
-          <th>Folds won</th><th>Served by</th></tr>
+      <tr><th>Lead</th><th>Model MAE ↓</th><th>Specialist MAE ↓</th><th>Naive MAE ↓</th>
+          <th>Paired Δ</th><th>Folds won</th><th>Served by</th></tr>
     </thead>
     <tbody>
 {rows}    </tbody>
   </table>
-  <p class="hint">Both predictors scored on the same rolling folds and the same rows.
+  <p class="hint">Every predictor scored on the same rolling folds and the same rows.
   “Paired Δ” is the naive rule's error minus the model's — positive means the model is
-  ahead — and “folds won” is how many of them it actually won. A gap that does not hold
-  fold by fold is noise, however large its average looks. The naive rule here is the
-  reading in hand at the moment of issue; at +24 h that is the same prediction as
-  “{naive_elsewhere}”, the rule quoted in the table further up, which is why both come
-  out at the same number there.</p>
+  ahead — and “folds won” is how many of them it actually won, so those two columns compare
+  the first and third only. A gap that does not hold fold by fold is noise, however large its
+  average looks. The naive rule here is the reading in hand at the moment of issue; at +24 h
+  that is the same prediction as “{naive_elsewhere}”, the rule quoted in the table further up,
+  which is why both come out at the same number there.</p>
   {served}"""

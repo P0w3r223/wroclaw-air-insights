@@ -87,15 +87,51 @@ def _loggable(results: dict) -> dict:
 
 def _lead_summary(policy: dict) -> dict:
     """The lead table reduced to one line per lead — the fold arrays belong in the bundle."""
+    by_lead = ((policy.get("specialist") or {}).get("by_lead")) or {}
+
+    def specialist_note(lead: int) -> str:
+        record = by_lead.get(lead)
+        return f", specialist {record['specialist_mae']}" if record else ""
+
     return {
         str(lead): (
-            f"model {record['model_mae']} vs naive {record['naive_mae']} µg/m³, "
-            f"paired {record['delta']['mean']:+} on "
+            f"model {record['model_mae']} vs naive {record['naive_mae']} µg/m³"
+            f"{specialist_note(lead)}, paired {record['delta']['mean']:+} on "
             f"{record['delta']['model_wins']}/{record['delta']['n_folds']} folds "
             f"-> {policy['leads'].get(lead, '?')}"
         )
         for lead, record in sorted(policy["scored"].items())
     }
+
+
+def _fit_specialists(
+    pm25: pd.DataFrame,
+    weather_df: pd.DataFrame,
+    model_name: str,
+    band: list[int] | None,
+) -> dict[int, dict]:
+    """Fit one estimator per lead in the served band, on all available rows.
+
+    Only the band is fitted, not every lead that cleared the gate. A lead outside the served
+    run would be an estimator nothing can reach — the policy never routes an hour to it — and
+    a bundle carrying predictors the page cannot name is a bundle that invites someone to
+    start naming them.
+    """
+    if not band:
+        return {}
+    fitted: dict[int, dict] = {}
+    for lead in range(int(band[0]), int(band[1]) + 1):
+        frame = specialists.specialist_features(pm25, weather_df, lead)
+        x, y = features.split_xy(frame)
+        estimator = model.candidate(model_name)
+        estimator.fit(x, y)
+        fitted[lead] = {
+            "model": estimator,
+            "feature_names": list(x.columns),
+            "lags": list(specialists.specialist_lags(lead)),
+            "n_rows": len(frame),
+        }
+    return fitted
 
 
 def observation_freshness(pm25: pd.DataFrame, now: datetime) -> dict:
@@ -177,16 +213,35 @@ def train(station_id: int = config.PRIMARY_STATION_ID, now: datetime | None = No
           f"({cv_paired['mean']:+} paired, won on {cv_paired['model_wins']}/"
           f"{cv_paired['n_folds']} folds, closest {cv_paired['smallest_margin']})")
 
+    # Phase 1 of the lead axis, re-measured every run rather than fixed in code. Which leads
+    # a specialist earns is a decision that moves with the data, exactly like the crossover,
+    # so the band the page publishes has to be the band this run measured. Costs ~10 fits per
+    # lead — the expensive step in this command, and the reason it is the *gate* that decides
+    # whether any of it ships rather than the best band the numbers happen to allow.
+    specialist_result = specialists.measure(pm25, weather_df, winner, n_splits=config.CV_SPLITS)
+    specialist_record = specialists.serving_record(specialist_result)
+    spec_gate = specialist_record["gate"]
+    print(f"[train] specialists: gate {spec_gate['verdict'].upper()} — "
+          f"{len(spec_gate['leads_clearing'])} of {spec_gate['leads_measured']} leads clear "
+          f"both references on >={spec_gate['folds_required']}/{config.CV_SPLITS} folds "
+          f"({spec_gate['majority_needed']} needed)")
+
     # The lead axis. One MAE has been describing 24 different tasks: the model cannot see
     # the lead, so its error is constant across the published chart while the naive rule's
     # grows with it. Measuring both on the same folds says where — if anywhere — the
     # forecast is beaten by simply repeating the current reading.
-    policy = horizon.measure(feature_frame, pm25, winner, n_splits=config.CV_SPLITS)
+    policy = horizon.measure(
+        feature_frame, pm25, winner, n_splits=config.CV_SPLITS, specialist=specialist_record
+    )
     crossover = policy["crossover_lead"]
     print(f"[train] lead axis: naive rule serves leads 1-{crossover}, model serves "
           f"{crossover + 1}-{config.FORECAST_LEADS[-1]}"
           if crossover
           else "[train] lead axis: the model beats the naive rule at every lead")
+    band = policy.get("specialist_band")
+    print(f"[train] specialists serve leads {band[0]}-{band[1]}"
+          if band
+          else "[train] no specialist band earns its hours — phase 0 policy stands alone")
     print(json.dumps(_lead_summary(policy), indent=2))
 
     results, _ = model.run_experiment(feature_frame, model_name=winner)
@@ -197,6 +252,9 @@ def train(station_id: int = config.PRIMARY_STATION_ID, now: datetime | None = No
     x_all, y_all = features.split_xy(feature_frame)
     final_model = model.candidate(winner)
     final_model.fit(x_all, y_all)
+    fitted_specialists = _fit_specialists(pm25, weather_df, winner, policy.get("specialist_band"))
+    if fitted_specialists:
+        print(f"[train] fitted {len(fitted_specialists)} specialists for the served band")
     path = model.save_model(
         final_model,
         list(x_all.columns),
@@ -214,6 +272,7 @@ def train(station_id: int = config.PRIMARY_STATION_ID, now: datetime | None = No
             "data_freshness": freshness,
         },
         policy=policy,
+        specialists=fitted_specialists,
     )
     print(f"[train] saved model -> {path}")
     return results

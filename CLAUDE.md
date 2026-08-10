@@ -19,7 +19,7 @@ src/wroclaw_air_insights/
     model.py           # split, selection, rolling CV, paired_delta, bundle persistence
     horizon.py         # per-lead scoring and the serving policy (which predictor answers which hour)
     ab.py              # feature-idea A/B on shared rows and folds; the verdict rule for a gain
-    specialists.py     # phase 1: a predictor per lead, and the gate it must clear
+    specialists.py     # phase 1: a predictor per lead, the gate it must clear, the band it serves
     prospective.py     # the forecast log: what was published, graded once the hours arrive
     serving.py         # live next-24h forecast from the saved bundle
   charts.py            # matplotlib figures as base64
@@ -52,8 +52,17 @@ These override convenience. Each one exists because the project already got it w
 - **The bar depends on whether nothing is an option.** A feature change can simply not happen,
   so it earns its column only if *no* fold contradicts it (`ab.verdict`). Some predictor has to
   answer a given hour, so the serving policy hands it over on a *majority* of folds
-  (`horizon._model_earns_the_lead`). The two rules disagree on cases that occur here — do not
-  collapse them into one function.
+  (`horizon._model_earns_the_lead`). A *third* predictor is optional again, so a specialist
+  takes an hour only by beating both references separately on ≥4 folds of 5
+  (`specialists._clears`) — never their maximum, which would be chosen on the folds that then
+  score it. These bars disagree on cases that occur here — do not collapse them into one
+  function.
+- **A served range is a contiguous band, chosen once.** The naive prefix and the specialist
+  band are each one decision (`horizon.crossover_lead`, `specialists.band`), not 24 argmins:
+  per-lead selection would be a best-of-N on the same folds that produce the published
+  figures, and the page could not describe a forecast with holes in it. Where the two overlap
+  the stronger measurement wins — a specialist takes an hour from the naive rule only by
+  having beaten it there.
 - **Count the comparisons before believing one.** A sign-consistent verdict over 5 folds is a
   1-in-16 event under a change that does nothing — and **ties raise that rate, not lower it**,
   since a tie cannot contradict. At this project's own tie rate a grid of a dozen expects ~1.4
@@ -103,7 +112,10 @@ Interpreter: `.venv/Scripts/python.exe` (3.12). Set `PYTHONIOENCODING=utf-8` on 
 µg/m³ and Polish characters print.
 
 `train` rewrites `models/pm25_forecaster.joblib`. The bundle carries a schema version, and an
-older one is refused with the retrain command rather than read half-heartedly.
+older one is refused with the retrain command rather than read half-heartedly. Since schema 3
+it also carries one fitted estimator per lead in the served band, each with the lag set it was
+trained on — so `train` re-measures the phase 1 gate on every run (~80 s locally, the most
+expensive step in the command) and the bundle is ~5 MB rather than ~0.4.
 
 ## Code graph
 

@@ -33,6 +33,7 @@ ORIGIN_PERSISTENCE_LABEL = baseline.LABELS["origin_persistence"]
 
 MODEL_SOURCE = config.FORECAST_SOURCE_MODEL
 NAIVE_SOURCE = config.FORECAST_SOURCE_NAIVE
+SPECIALIST_SOURCE = config.FORECAST_SOURCE_SPECIALIST
 
 
 def _mae(truth: np.ndarray, prediction: np.ndarray) -> float:
@@ -138,17 +139,48 @@ def crossover_lead(
     return crossover
 
 
+def _source_for(lead: int, crossover: int, band: tuple[int, int] | None) -> str:
+    """Which of the three predictors answers one lead.
+
+    **The specialist band outranks the naive prefix where they overlap, and that ordering is
+    the decision, not a detail.** The two bars are not the same strength. The prefix asks only
+    that the *incumbent* fail to win a majority of folds against the naive rule — it is a bar
+    the incumbent fails, not one the naive rule passes. The band asks that the specialist beat
+    **both** references separately on at least four folds of five, which includes beating the
+    naive rule on the very leads in question. Leaving such a lead to the naive rule would let
+    the weaker measurement overrule the stronger one on the same hours.
+
+    The order below is therefore band → prefix → incumbent, and the two decisions stay
+    separately measured: neither is derived from the other, and a lead is only ever taken from
+    the naive rule by a predictor that was shown to beat it.
+    """
+    if band and band[0] <= lead <= band[1]:
+        return SPECIALIST_SOURCE
+    return NAIVE_SOURCE if lead <= crossover else MODEL_SOURCE
+
+
 def serving_policy(
-    scored: dict[int, dict], leads: tuple[int, ...] = config.FORECAST_LEADS
+    scored: dict[int, dict],
+    leads: tuple[int, ...] = config.FORECAST_LEADS,
+    specialist: dict | None = None,
 ) -> dict:
-    """Which predictor answers each lead, plus the evidence behind the decision."""
+    """Which predictor answers each lead, plus the evidence behind the decision.
+
+    ``specialist`` is :func:`specialists.serving_record` — the phase 1 measurement reduced to
+    its band and its gate. It is passed in rather than measured here so that this module keeps
+    owning one question (*which predictor answers which hour*) while the module that defines
+    the gate keeps owning the other (*has a specialist earned the hour at all*). A gate that
+    failed arrives as ``band: None`` and the policy is exactly what phase 0 produced.
+    """
     crossover = crossover_lead(scored, leads)
+    band = tuple(specialist["band"]) if specialist and specialist.get("band") else None
     return {
         "crossover_lead": crossover,
         "naive_label": ORIGIN_PERSISTENCE_LABEL,
+        "specialist_band": list(band) if band else None,
+        "specialist": specialist or None,
         "leads": {
-            int(lead): (NAIVE_SOURCE if lead <= crossover else MODEL_SOURCE)
-            for lead in leads
+            int(lead): _source_for(int(lead), crossover, band) for lead in leads
         },
         "scored": scored,
     }
@@ -161,29 +193,67 @@ def measure(
     leads: tuple[int, ...] = config.FORECAST_LEADS,
     n_splits: int = config.CV_SPLITS,
     random_state: int = 42,
+    specialist: dict | None = None,
 ) -> dict:
     """Score every lead and derive the serving policy — the whole lead axis in one call."""
     origins = features.observations_at_origin(pm25, features_df["timestamp"], leads)
     fold_predictions = model.cross_validate_predictions(
         features_df, model_name, n_splits, random_state
     )
-    return serving_policy(score_leads(fold_predictions, origins, leads), leads)
+    return serving_policy(score_leads(fold_predictions, origins, leads), leads, specialist)
+
+
+def _assigned_source(policy: dict, lead: int) -> str:
+    """What the stored policy says about one lead, tolerating a JSON round trip on its keys."""
+    assignment = policy.get("leads") or {}
+    named = assignment.get(lead, assignment.get(str(lead)))
+    if named:
+        return str(named)
+    # A policy without the mapping predates it; the prefix is the whole decision there.
+    return NAIVE_SOURCE if lead <= int(policy.get("crossover_lead") or 0) else MODEL_SOURCE
 
 
 def apply_policy(
-    forecast: pd.DataFrame, origin_value: float | None, policy: dict
+    forecast: pd.DataFrame,
+    origin_value: float | None,
+    policy: dict,
+    specialist_predictions: dict[int, float] | None = None,
 ) -> pd.DataFrame:
-    """Replace the model's answer with the naive rule wherever the policy says to.
+    """Hand each published hour to the predictor the policy says earned it.
 
-    ``forecast`` must carry ``lead`` and ``predicted_pm25``. Returns a frame with a
-    ``source`` column, so the page can state which hours the model actually answered
-    instead of implying it answered all of them.
+    ``forecast`` must carry ``lead`` and ``predicted_pm25`` — the incumbent's answer at every
+    lead. Returns a frame with a ``source`` column, so the page can state which hours the
+    model actually answered instead of implying it answered all of them.
+
+    **Both replacements degrade to the incumbent rather than failing, and the label degrades
+    with them.** A naive hour needs an origin observation and a specialist hour needs that
+    specialist's prediction; either can be absent on a station outage or a bundle whose
+    feature builder has moved on. Publishing the incumbent's answer under the *label* of a
+    predictor that did not produce it would be the one failure this column exists to prevent,
+    so the row is relabelled, not just refilled.
     """
     served = forecast.copy()
-    crossover = int(policy.get("crossover_lead") or 0)
-    naive_hours = (served["lead"] <= crossover) & (origin_value is not None)
+    predictions = {int(k): float(v) for k, v in (specialist_predictions or {}).items()}
+    origin = (
+        round(float(origin_value), 1)
+        if origin_value is not None and np.isfinite(origin_value)
+        else None
+    )
 
-    served["source"] = np.where(naive_hours, NAIVE_SOURCE, MODEL_SOURCE)
-    if naive_hours.any():
-        served.loc[naive_hours, "predicted_pm25"] = round(float(origin_value), 1)
+    sources, values = [], []
+    for lead, incumbent in zip(served["lead"].astype(int), served["predicted_pm25"]):
+        source = _assigned_source(policy, int(lead))
+        specialist = predictions.get(int(lead))
+        if source == NAIVE_SOURCE and origin is not None:
+            sources.append(NAIVE_SOURCE)
+            values.append(origin)
+        elif source == SPECIALIST_SOURCE and specialist is not None and np.isfinite(specialist):
+            sources.append(SPECIALIST_SOURCE)
+            values.append(round(specialist, 1))
+        else:
+            sources.append(MODEL_SOURCE)
+            values.append(incumbent)
+
+    served["source"] = sources
+    served["predicted_pm25"] = values
     return served
