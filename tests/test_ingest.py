@@ -111,3 +111,43 @@ def test_parse_aqindex_empty_payload():
     result = gios.parse_aqindex({})
     assert result["overall"]["value"] is None
     assert result["pollutants"] == {}
+
+
+# The shape GIOŚ actually serves: the category key is spelled "wskażnika" (ż) while the value
+# key beside it uses "wskaźnika" (ź). The fixture above was written from the documented
+# spelling and passed while production dropped every category on the floor.
+AQINDEX_PAYLOAD_AS_SERVED = {
+    "AqIndex": {
+        "Identyfikator stacji pomiarowej": 129,
+        "Wartość indeksu": -1,
+        "Nazwa kategorii indeksu": "Brak indeksu",
+        "Kod zanieczyszczenia krytycznego": "OZON",
+        "Wartość indeksu dla wskaźnika NO2": 0,
+        "Nazwa kategorii indeksu dla wskażnika NO2": "Bardzo dobry",
+        "Wartość indeksu dla wskaźnika PM2.5": 0,
+        "Nazwa kategorii indeksu dla wskażnika PM2.5": "Bardzo dobry",
+        "Wartość indeksu dla wskaźnika O3": None,
+        "Nazwa kategorii indeksu dla wskażnika O3": None,
+    }
+}
+
+
+def test_parse_aqindex_reads_the_category_key_gios_actually_sends():
+    result = gios.parse_aqindex(AQINDEX_PAYLOAD_AS_SERVED)
+    assert result["pollutants"]["PM2.5"]["category"] == "Bardzo dobry"
+    assert result["pollutants"]["NO2"]["category"] == "Bardzo dobry"
+    assert "O3" not in result["pollutants"]
+
+
+def test_parse_aqindex_still_reads_the_correctly_spelled_key():
+    """Read both spellings, correct one first, so this keeps working if GIOŚ fixes the typo."""
+    assert (
+        gios.parse_aqindex(AQINDEX_PAYLOAD)["pollutants"]["PM2.5"]["category"] == "Dobry"
+    )
+
+
+def test_parse_aqindex_keeps_an_absent_overall_index_as_gios_reports_it():
+    """-1 / "Brak indeksu" is a real answer about the station, not a parse failure."""
+    result = gios.parse_aqindex(AQINDEX_PAYLOAD_AS_SERVED)
+    assert result["overall"] == {"value": -1, "category": "Brak indeksu"}
+    assert result["critical_pollutant"] == "OZON"
