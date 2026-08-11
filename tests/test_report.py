@@ -969,6 +969,20 @@ def test_the_page_says_what_the_project_is_before_the_first_chart():
     assert report._REPO_URL in lede
 
 
+def test_the_narrow_breakpoint_frees_the_regime_tables_own_column_widths():
+    """Measured at a real 390 px viewport: all four tables scrolled, not just the wide one.
+
+    Half the reason was specificity — `.metrics.regimes th + th` outranks the plain
+    `.metrics th + th` that the 640px block relaxes, so the regime table carried fixed
+    5.5rem columns onto a phone. The narrow block has to name it explicitly, and a later
+    edit that drops the qualified selector would silently restore the bug.
+    """
+    css = _page(_fresh_metadata())
+    narrow = css.split("@media (max-width: 480px)")[1].split("}\n  }")[0]
+    assert ".metrics.regimes th + th" in narrow
+    assert ".metrics.regimes td + td" in narrow
+
+
 def test_the_opening_paragraph_carries_no_measured_figure():
     # The one standing block of prose on an otherwise recomputed page. Any figure written
     # into it is a claim the next run can contradict without the text noticing — which is
