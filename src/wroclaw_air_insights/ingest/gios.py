@@ -230,10 +230,27 @@ def parse_aqindex(payload: dict) -> dict:
     }
     for pollutant in AQI_POLLUTANTS:
         value = aq.get(f"Wartość indeksu dla wskaźnika {pollutant}")
-        category = aq.get(f"Nazwa kategorii indeksu dla wskaźnika {pollutant}")
+        category = _sub_index_category(aq, pollutant)
         if value is not None or category is not None:
             result["pollutants"][pollutant] = {"value": value, "category": category}
     return result
+
+
+def _sub_index_category(aq: dict, pollutant: str) -> str | None:
+    """The sub-index category, under either spelling GIOŚ publishes it as.
+
+    The value key says “wskaźnika” and the category key says “wskażnika” — ź against ż. It is
+    a typo in their payload, not in ours, and it was load-bearing: reading only the correct
+    spelling returned a category of ``None`` for every pollutant, so the station's measured
+    “Bardzo dobry” for PM2.5 was thrown away and the page fell back to the overall index.
+
+    Both spellings are tried, correct one first, so this keeps working the day GIOŚ fixes it.
+    """
+    for spelling in ("wskaźnika", "wskażnika"):
+        category = aq.get(f"Nazwa kategorii indeksu dla {spelling} {pollutant}")
+        if category is not None:
+            return category
+    return None
 
 
 def fetch_aqindex(station_id: int) -> dict:
