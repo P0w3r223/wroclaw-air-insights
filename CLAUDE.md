@@ -124,6 +124,27 @@ it also carries one fitted estimator per lead in the served band, each with the 
 trained on — so `train` re-measures the phase 1 gate on every run (~80 s locally, the most
 expensive step in the command) and the bundle is ~5 MB rather than ~0.4.
 
+## Verifying the published page
+
+The page is the deliverable, so a claim about *it* is measured, not eyeballed — the same rule
+the numbers on it live under. Two instruments have already returned confident wrong answers:
+
+- **Confirm a deploy on fetched HTML, never on a reload.** `curl` the URL and assert on a
+  build-specific marker (the `Generated …` stamp, or whatever the change added). A browser
+  reload can serve a cached page that agrees with what you hoped.
+- **A phone width needs CDP, not `--window-size`.** Chromium will not create a window under
+  ~500 px, so `msedge --headless --window-size=390,900 --screenshot` renders wide and *crops* —
+  which looks exactly like content overflowing, and was read that way on two consecutive days.
+  Drive it over `--remote-debugging-port` with
+  `Emulation.setDeviceMetricsOverride {width, height, deviceScaleFactor, mobile: true}`; the
+  venv already has `websocket-client` and `requests`. The tell for the artefact: a paragraph
+  wraps identically at 360 px and at 500 px.
+- **`table { width: 100% }` hides how tight a table is.** Rendered width reports the card's
+  width whether there is room to spare or none. Force `width: min-content` per table to read
+  the floor, and size against the *widest realistic* content — two-digit winter MAE/RMSE, not
+  today's single-digit summer figures. A layout that fits only while the air is clean fails in
+  the season an hourly PM2.5 page is read.
+
 ## Code graph
 
 The repo carries two indexes: `.codegraph/` (queried with `codegraph_explore`, per the global
