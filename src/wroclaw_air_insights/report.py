@@ -44,6 +44,60 @@ _AQI_COLORS = {
 }
 _DEFAULT_REPORT_PATH = config.PROJECT_ROOT / "reports" / "site" / "index.html"
 
+# GIOŚ's own wording for "this station has no index right now", and the sub-index this page
+# is actually about.
+_NO_INDEX = "Brak indeksu"
+_PM25_INDEX = "PM2.5"
+
+
+def _index_badge(aqi: dict) -> tuple[str, str, str, str]:
+    """The badge category, its colour, what it is an index *of*, and the sentence beside it.
+
+    The overall index is carried by whichever pollutant GIOŚ names critical that hour, and on
+    a summer afternoon that is ozone — which the station this page serves does not measure.
+    So the overall index goes to “Brak indeksu” on a routine basis while the same payload
+    still carries a measured PM2.5 sub-index. Leading with the overall one meant the page went
+    grey about a pollutant it never discusses and discarded the one it exists to report.
+
+    The PM2.5 sub-index therefore leads, and the overall index becomes the note beside it.
+    Neither is invented: when the payload carries no usable category at all, this falls back
+    to GIOŚ's own wording and says only what the payload supports.
+    """
+    overall = (aqi.get("overall") or {}).get("category")
+    pollutants = aqi.get("pollutants") or {}
+    pm25 = (pollutants.get(_PM25_INDEX) or {}).get("category")
+    overall_usable = bool(overall) and overall != _NO_INDEX
+
+    if not pm25:
+        # Nothing measured for PM2.5: the overall index is all there is, and when that is
+        # missing too the badge says so in GIOŚ's words rather than in invented ones. No
+        # qualifier either — an unqualified badge *is* the overall index.
+        category = overall or _NO_INDEX
+        return category, _AQI_COLORS.get(category, _NEUTRAL_BADGE), "", ""
+
+    if overall_usable:
+        note = f"""<p class="hint">GIOŚ's overall index for this station is
+  <strong>{overall}</strong>; the badge above is its PM2.5 component, the pollutant this page
+  forecasts.</p>"""
+        return pm25, _AQI_COLORS.get(pm25, _NEUTRAL_BADGE), _PM25_INDEX, note
+
+    # Why the overall index is missing, stated from the payload rather than diagnosed: the
+    # critical pollutant is named there, and so is every pollutant this station's index
+    # covers. A reader can see for themselves that the first is not among the second — which
+    # is a claim the data supports, unlike "the station has no ozone sensor".
+    critical = aqi.get("critical_pollutant")
+    covered = ", ".join(sorted(pollutants))
+    because = (
+        f" It names <strong>{critical}</strong> as the critical pollutant, and this station's "
+        f"index covers only {covered}."
+        if critical and covered
+        else ""
+    )
+    note = f"""<p class="hint">GIOŚ publishes no overall index for this station right
+  now.{because} The badge above is the PM2.5 sub-index, which is the pollutant this page
+  forecasts.</p>"""
+    return pm25, _AQI_COLORS.get(pm25, _NEUTRAL_BADGE), _PM25_INDEX, note
+
 
 def _forecast_origin(forecast_df: pd.DataFrame, generated_at: datetime):
     """The hour the forecast was anchored on, as an aware datetime — or ``None``.
@@ -640,9 +694,8 @@ def _render_page(
     # caller's metadata is not this function's to rewrite.
     metadata = {**metadata, "model": metadata.get("model", metadata.get("metrics", {}))}
 
-    overall = aqi.get("overall", {})
-    category = overall.get("category") or "Brak indeksu"
-    colour = _AQI_COLORS.get(category, _NEUTRAL_BADGE)
+    category, colour, badge_for, index_note = _index_badge(aqi)
+    qualifier = f'<span class="badge-for">{badge_for}</span>' if badge_for else ""
     chart_b64 = charts.forecast(forecast_df)
     # The largest number on the page, and it comes from the frame rather than from the
     # metadata — so it needs the same gate every stored metric already passes. Called the
@@ -700,6 +753,8 @@ def _render_page(
   .sub {{ color: var(--muted); margin: 0 0 16px; }}
   .badge {{ display: inline-block; padding: 0.34rem 0.8rem; border-radius: 999px;
            color: #fff; font-weight: 600; font-size: 0.85rem; background: {colour}; }}
+  /* The badge is not always the overall index, so when it is a sub-index it says which. */
+  .badge-for {{ color: var(--muted); font-size: 0.78rem; margin-left: 7px; }}
   .card {{ background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
           padding: 20px 22px; margin: 16px 0; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); }}
   section.card {{ scroll-margin-top: 62px; }}
@@ -792,7 +847,8 @@ def _render_page(
 <p class="sub">Live 24-hour PM2.5 forecast — {_station_name(station_id)}</p>
 
 <div class="card">
-  <p>Current air-quality index: <span class="badge">{category}</span></p>
+  <p>Current air-quality index: <span class="badge">{category}</span>{qualifier}</p>
+  {index_note}
   <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
   {freshness}
 </div>
