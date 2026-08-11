@@ -1,12 +1,16 @@
 # Report roadmap — making the Pages report speak to a non-technical reader
 
 Date: 2026-08-06
-Status: draft — fifth revision (item 5 **complete**: phase 1 measured, gated and served on a
+Updated: 2026-08-11
+Status: draft — sixth revision (item 5 **complete**: phase 1 measured, gated and served on a
 re-measured band, whose gate then failed on fresher data — the null ships and the machinery
 stands; item 6 **complete**: three interval constructions measured, one publishable, bundle
 schema 4; item 7's forecast log **live** since 2026-08-08, now grading interval coverage too;
 both published nulls re-measured under the paired rule that replaced the retracted fold-spread
-test; item 14 dropped. Every numbered item is now measured or dropped.)
+test; item 14 dropped; item 15 **complete** — the page made legible, and the four defects that
+took, measured at a real phone viewport. Every numbered item is measured, shipped or dropped.
+What is open now comes from the running system rather than from this plan: see **Next**, where
+item 16 gates the rest.)
 Author: P0w3r223 + Claude
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
@@ -993,6 +997,57 @@ therefore not obviously the right one — see the entry itself.
     payload contains arbitrary letter runs — a bare `"nan" not in html` fails on PNG bytes,
     not on prose. The page-level tests strip `data:image/png;base64,…` first.
 
+15. **The page as something a stranger can read — done, 2026-08-11.** Every item above makes
+    the page *correct*. None of them made it *readable*, and four defects in one day showed the
+    two are measured separately.
+
+    - **Presentation (PR #16).** 2 812 words in one undifferentiated card, with all three
+      figures putting their legend over the data. Now one card per section, a jump list built
+      only from sections that rendered, a four-tile figure strip, and ~1 150 words moved behind
+      `<details>` rather than deleted. Visible prose 2 812 → 1 583.
+    - **A unit a thousand times too large (PR #16).** `text-transform: uppercase` on table
+      headers upper-cased the micro sign to a capital mu: "Typical width (µg/m³)" published as
+      "(MG/M³)". A test asserts the rule is gone.
+    - **The badge reported the wrong index (PR #17).** Documented in
+      `docs/research/data-sources.md`, because both causes are properties of the GIOŚ payload
+      rather than of this code. The one that is ours: the fixture was written from the
+      documented spelling instead of a captured response, so a green suite never saw it.
+    - **The page never said what it was (PR #18).** It opened on a chart. A reader arriving
+      from the portfolio index could not tell a live artefact from a screenshot, see where the
+      data came from, or find the code — the only repository link was in the footer, in
+      0.85rem grey. Three sentences now run above the forecast card, and a test keeps them
+      free of figures: it is the one standing block of prose on a page whose every number is
+      rebuilt daily, so a number written into it is the single claim a later run could
+      contradict silently.
+    - **The tables did not fit a phone (PRs #19, #20).** The CSS claimed only the seven-column
+      lead table should scroll; at a real 390 px viewport all four did. Two causes:
+      `.metrics.regimes th + th` outranks the `.metrics th + th` that the 640 px block relaxes,
+      so the regime table kept fixed 5.5rem columns; and five columns of numbers at body size
+      need ~427 px against the ~336 a phone leaves inside a card.
+
+    **Two measurement traps, both of which produced a wrong answer before the right one.**
+
+    A headless screenshot at `--window-size=390` is not a 390 px layout: Chromium will not
+    create a window under ~500 px, so it renders wide and *crops*, which looks exactly like
+    content overflowing. That artefact was read as a responsiveness bug on two consecutive
+    days. The tell is that a paragraph wraps identically at 360 and at 500. Measured over CDP
+    with `Emulation.setDeviceMetricsOverride`, the page has no horizontal overflow at any width
+    tried — the real finding, the tables, only surfaced once the instrument was fixed.
+
+    And `table { width: 100% }` pins every table at exactly the card width, so a rendered-width
+    check reports the same number whether there is room to spare or none. Forcing
+    `width: min-content` per table is what exposes the floor — without it, #19's margins all
+    read `+0` and the metrics table looked comfortable while sitting one pixel inside the card.
+
+    **Sized for winter, not for today.** That one pixel was August paying for it: with
+    two-digit MAE and RMSE the same table came to 346 px and scrolled again. At 0.78rem/4px the
+    winter case is a min-content 324 against 336. Published state at 390 px — metrics 316
+    (+20 on current data), interval 264 (+72), regimes 224 (+112), lead 360 (−24, scrolls by
+    design). Below ~380 px the metrics table scrolls again: its floor is the longest
+    unbreakable word in the label column, a model name, and the ways under that are
+    hyphenating it mid-word or type below 12 px. A scrolling table is the better of the three,
+    and the CSS comment says so rather than promising past it.
+
 ### Correctness debts found while measuring the above — all three done
 
 *Cleared as prerequisites for item 5: the first is required by any change to the feature
@@ -1034,6 +1089,52 @@ already drifted.*
     the reason it fails is itself the finding: **the spatial question needs stations this city
     does not instrument for it.** One automatic PM2.5 sensor is what Wrocław has, and it is
     what the project is built on.
+
+## Next — the state as of 2026-08-11, and what it points at
+
+Every numbered item is measured, shipped or dropped. What follows is not a backlog of
+features; it is what the running system has started saying and has not been answered yet.
+
+**16. The log now over-weights days the workflow was run by hand.** `score-log` reports 215
+logged forecasts across four origin days, and the split is 24 / 23 / 48 / 120. The last figure
+is today: `refresh.yml` was dispatched five times while shipping items 15's PRs, each run
+logging a fresh origin, so **56% of the record is one day** — and the aggregate is taken over
+rows. The key `(station, origin, lead)` is doing exactly its job (a re-run of the *same* origin
+cannot double-count), so this is not a bug in the log; it is a bug in reading the log as though
+its days were equally weighted. Decide between reporting per-day means of per-lead error, or
+stating the run count beside the figure. Until then no prospective figure should be quoted
+without the origin-day counts beside it. **This is the first item to settle, because every
+other prospective claim below is read off the same aggregate.**
+
+**17. Prospective evidence is still too thin to publish, and it is worth naming how thin.**
+104 forecasts graded, of which the served-predictor split is model 82 (MAE 2.573), naive 20
+(2.505), **specialist 2 (4.400)**. Two graded hours is not a measurement of the specialist
+band — it is a reminder that the phase 1 gate rarely assigns any leads on current data, which
+is what item 5's null already said retrospectively. Item 3 (the backtest chart) becomes
+prospective when the log holds weeks rather than four days; the honest date for that is late
+August at the earliest, and item 16 has to land first or the weeks will be unevenly weighted.
+
+**18. Interval coverage out of sample has not been compared with the 0.762 that cross-validation
+gave it.** `score-log` grades published bounds. Nobody has yet put the prospective rate beside
+the retrospective one — the single most informative thing this project could say about its own
+uncertainty claim, and the one figure a coverage gate cannot fake, because the hours were not
+in hand when the band was drawn.
+
+**19. Whether the specialist gate ever clears again.** It cleared on 16 of 24 leads three weeks
+before item 5 shipped and on 7 of 24 on fresh data the day it did. Each daily run re-measures
+it (~80 s of `train`). Worth checking on a later window whether that was seasonal, and saying so
+either way; the null is already published, so a clearance would be the news, not the failure.
+
+**Housekeeping, carried from 2026-08-10 and still open.** Nine merged branches survive locally
+and on origin: `docs/prospective-log-state`, `feat/ab-harness`, `feat/lead-specialists`,
+`feat/prediction-intervals`, `feat/prospective-log`, `feat/report-presentation`,
+`feat/serve-specialist-band`, `fix/aqi-badge-pm25`, `fix/readme-dated-record`. All are merged
+into `main`; the branches from items 15's later PRs were deleted at merge.
+
+**Unnumbered and optional, unchanged:** item 8 (health context) and item 9 (a Polish page).
+Item 9 is worth weighing against item 16 rather than beside it — a second language doubles the
+prose that every future measurement has to keep true, and this file records four defects in one
+day caused by prose drifting from the numbers next to it.
 
 ## Not doing yet
 
