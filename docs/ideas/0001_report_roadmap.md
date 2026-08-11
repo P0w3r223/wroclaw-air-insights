@@ -1125,11 +1125,9 @@ before item 5 shipped and on 7 of 24 on fresh data the day it did. Each daily ru
 it (~80 s of `train`). Worth checking on a later window whether that was seasonal, and saying so
 either way; the null is already published, so a clearance would be the news, not the failure.
 
-**Housekeeping, carried from 2026-08-10 and still open.** Nine merged branches survive locally
-and on origin: `docs/prospective-log-state`, `feat/ab-harness`, `feat/lead-specialists`,
-`feat/prediction-intervals`, `feat/prospective-log`, `feat/report-presentation`,
-`feat/serve-specialist-band`, `fix/aqi-badge-pm25`, `fix/readme-dated-record`. All are merged
-into `main`; the branches from items 15's later PRs were deleted at merge.
+~~**Housekeeping.** Nine merged branches survive locally and on origin.~~ **Done 2026-08-11** —
+all nine deleted from both after checking each against `git branch --merged origin/main`. Only
+`main` and the `forecast-log` data branch remain.
 
 **Unnumbered and optional, unchanged:** item 8 (health context) and item 9 (a Polish page).
 Item 9 is worth weighing against item 16 rather than beside it — a second language doubles the
