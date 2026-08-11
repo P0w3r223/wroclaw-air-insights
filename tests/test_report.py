@@ -1281,3 +1281,65 @@ def test_metric_headers_are_not_upper_cased_by_the_stylesheet():
     "(MG/M³)" — a unit a thousand times too large, in a header the page cannot annotate."""
     html = _page(_fresh_metadata())
     assert "text-transform: uppercase" not in html
+
+
+# --- the index badge: what it is an index of ------------------------------------
+_AQI_NO_OVERALL = {
+    "overall": {"value": -1, "category": "Brak indeksu"},
+    "critical_pollutant": "OZON",
+    "pollutants": {
+        "NO2": {"value": 0, "category": "Bardzo dobry"},
+        "PM2.5": {"value": 0, "category": "Bardzo dobry"},
+    },
+}
+
+
+def test_badge_leads_with_pm25_when_gios_publishes_no_overall_index():
+    """The defect this exists for: the station measures no ozone, so on the afternoons ozone
+    is the critical pollutant the overall index is absent — and the page went grey about a
+    pollutant it never discusses while holding a measured category for the one it does."""
+    category, colour, badge_for, note = report._index_badge(_AQI_NO_OVERALL)
+    assert category == "Bardzo dobry"
+    assert colour != report._NEUTRAL_BADGE
+    assert "no overall index" in note
+    assert badge_for == "PM2.5"              # the badge says what it is an index of
+    assert "OZON" in note                    # why it is missing, from the payload
+    assert "NO2, PM2.5" in note              # what the station's index does cover
+
+
+def test_badge_prefers_pm25_and_reports_the_overall_index_beside_it():
+    aqi = {**_AQI_NO_OVERALL, "overall": {"value": 1, "category": "Dobry"}}
+    category, _, badge_for, note = report._index_badge(aqi)
+    assert category == "Bardzo dobry"
+    assert badge_for == "PM2.5"
+    assert "<strong>Dobry</strong>" in note
+
+
+def test_badge_falls_back_to_the_overall_index_when_pm25_has_no_category():
+    category, _, badge_for, note = report._index_badge({"overall": {"category": "Dobry"}})
+    assert category == "Dobry"
+    assert badge_for == ""   # an unqualified badge is the overall index
+    assert note == ""
+
+
+def test_badge_says_what_gios_says_when_there_is_nothing_at_all():
+    """No invented category, and no sentence explaining an absence the payload cannot
+    account for."""
+    category, colour, badge_for, note = report._index_badge({})
+    assert category == "Brak indeksu"
+    assert colour == report._NEUTRAL_BADGE
+    assert badge_for == ""
+    assert note == ""
+
+
+def test_badge_does_not_name_a_critical_pollutant_the_payload_omits():
+    silent = {**_AQI_NO_OVERALL, "critical_pollutant": None}
+    _, _, _, note = report._index_badge(silent)
+    assert "no overall index" in note
+    assert "critical pollutant" not in note
+
+
+def test_page_carries_the_badge_note_next_to_the_badge():
+    html = _page(_fresh_metadata(), aqi=_AQI_NO_OVERALL)
+    assert '<span class="badge">Bardzo dobry</span>' in html
+    assert "no overall index" in html
