@@ -876,15 +876,21 @@ def _render_page(
      "Typical width (µg/m³)" set on one line is wider than the column it labels — while
      the numbers still never do.
 
-     Where this lands, measured rather than hoped: at 390 px the lead table is now the only
-     one that scrolls, which is the whole point of the rule. Below ~370 px the metrics table
-     starts scrolling again, because its floor is the longest unbreakable word in the label
-     column — a model name — and the only ways under that are hyphenating "HistGradient-
-     Boosting" mid-word or type below 12 px. A scrolling table is the better of those
-     three. */
+     Where this lands, measured rather than hoped: at 390 px the lead table is the only one
+     that scrolls, which is the whole point of the rule. The metrics table is the tight one,
+     and it must be sized for winter rather than for today — its floor is the longest
+     unbreakable word in the label column (a model name) plus four numeric columns, which
+     comes to 324 px against the 336 available once MAE and RMSE go two-digit. Measured at
+     0.82rem/5px that same case came to 346 and scrolled, which is why the type is smaller
+     than a first fit suggested: a table that fits only while the air is clean is a table
+     that breaks in the smog season this page exists for.
+
+     Below ~380 px the margin is gone and the metrics table scrolls again. Going further
+     would mean hyphenating "HistGradientBoosting" mid-word or type under 12 px, and a
+     scrolling table is the better of those three. */
   @media (max-width: 480px) {{
-    .metrics {{ font-size: 0.82rem; }}
-    .metrics th, .metrics td {{ padding: 4px 5px; }}
+    .metrics {{ font-size: 0.78rem; }}
+    .metrics th, .metrics td {{ padding: 4px 4px; }}
     .metrics th, .metrics th + th {{ white-space: normal; }}
     .metrics td + td {{ white-space: nowrap; }}
     .metrics th + th, .metrics td + td,
