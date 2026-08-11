@@ -343,6 +343,11 @@ things it carries deliberately — the experiments that were measured and **not*
 a glossary of MAE / RMSE / R² for a reader who does not have one. Every number there comes
 from that run's own metadata, which is why this file quotes none of them as current.
 
+It is meant to survive being opened on a phone, and that is measured rather than assumed — at
+a 390 px viewport three of the four tables fit inside the card and only the seven-column lead
+table scrolls, with the type sized for two-digit winter errors rather than for today's
+single-digit summer ones.
+
 **The index badge is the PM2.5 sub-index, not the station's overall index.** GIOŚ derives
 the overall one from whichever pollutant it names critical that hour; on a summer afternoon
 that is ozone, which al. Wiśniowa does not measure, so the overall index reads *Brak indeksu*
