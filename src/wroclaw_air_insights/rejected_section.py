@@ -48,7 +48,14 @@ MEASURED_SCORED_FOLDS = 60
 
 @dataclass(frozen=True)
 class Experiment:
-    """One change that was measured and not shipped."""
+    """One change that was measured and not shipped.
+
+    ``why`` is the one-line case for trying it and stays open on the page; ``finding`` is the
+    argument from the folds and is folded away behind a toggle. The split is deliberate:
+    three findings at full length made this the longest block on the page, and a reader
+    scanning for *what happened* had to read past 900 words of *how it was established*.
+    Nothing is dropped — the toggle is one click, and the verdict is open beside it.
+    """
 
     title: str
     why: str
@@ -59,10 +66,9 @@ class Experiment:
 EXPERIMENTS: tuple[Experiment, ...] = (
     Experiment(
         title="Re-encoding wind direction",
-        why="""Direction is stored as a bearing from 0 to 360°, which breaks at north: 359°
-        and 1° are almost the same wind, and a model reading the raw number sees opposite
-        ends of the scale. Splitting it into north–south and east–west components is the
-        textbook fix.""",
+        why="""A bearing breaks at north — 359° and 1° are nearly the same wind, at opposite
+        ends of the number the model reads. Splitting it into components is the textbook
+        fix.""",
         finding="""Three encodings were scored on identical folds — the raw bearing, u/v
         components, and sine/cosine — then re-scored one test period at a time when this
         project replaced its test for what counts as a real gain. For the deployed model
@@ -74,17 +80,16 @@ EXPERIMENTS: tuple[Experiment, ...] = (
         in advance.</em> The linear model — the single one that structurally cannot read a
         bearing — came out ahead under sine/cosine in four of the five test periods, with the
         fifth too close to call and none against. That is about as much as five periods can
-        show, and it still does not reach this page either way: the linear model trails the
-        deployed one by more than a full µg/m³, and winning back a tenth of one does not close
-        a gap that size.""",
+        show, and it still does not reach this page: the linear model trails the deployed one
+        by more than a full µg/m³, and winning back a tenth of one does not close a gap that
+        size.""",
         verdict="nothing consistent for the deployed model; 0.10 µg/m³ to a candidate that "
                 "starts more than a µg/m³ behind it",
     ),
     Experiment(
         title="Adding the other pollutants",
-        why="""The station also reports NO₂ and CO at full coverage, so adding them costs no
-        training rows at all. Unlike a re-encoding, this adds genuinely new information
-        rather than restating what is already there.""",
+        why="""The station reports NO₂ and CO at full coverage, so adding them costs no
+        training rows — and unlike a re-encoding, they carry genuinely new information.""",
         finding="""Both were tried at a 24-hour lag and with the full treatment PM2.5's own
         history gets. The argument was right in kind and wrong in magnitude: NO₂ and PM2.5 in
         a city share their sources — traffic, heating, the same boundary layer — so a day-old
@@ -101,8 +106,8 @@ EXPERIMENTS: tuple[Experiment, ...] = (
     Experiment(
         title="Telling one model how far ahead it is forecasting",
         why="""The model cannot see its own lead time, which is why its error is flat across
-        the whole chart above. Adding the lead as an input column looks like the obvious
-        repair, and it would have been one model instead of many.""",
+        the chart above. Adding the lead as a column would have been one model instead of
+        many.""",
         finding="""Trained across all 24 leads at once it reached 6.12–6.25 µg/m³ at the
         +1 h lead, against 3.75 for simply repeating the current reading — worse than doing
         nothing, on the hour the change was meant to rescue. Capacity was the obvious
@@ -127,10 +132,10 @@ def _anchor(metadata: dict) -> str:
     sentence that announced drift unconditionally would be contradicted by the two identical
     numbers in front of it, which is the failure this whole section is written against.
     """
-    dated = f"""These ran on hours from {MEASUREMENT_WINDOW}, when the deployed model's
+    dated = f"""Measured on hours from {MEASUREMENT_WINDOW}, when the deployed model's
   year-round error was {ERROR_WHEN_MEASURED:.2f} µg/m³"""
-    reason = """The results above are stated as differences rather than errors for that
-  reason: the level moves with the window, the difference is what was actually learned."""
+    reason = """Hence differences rather than errors: the level moves with the window, the
+  difference is what was learned."""
 
     current = _number((metadata.get("cross_validation") or {}).get("mae_mean"))
     if current is None:
@@ -154,11 +159,19 @@ def _paragraphs(text: str) -> str:
 
 
 def _entry(experiment: Experiment) -> str:
+    """The case and the verdict open; the evidence one click away.
+
+    The toggle holds the *finding* rather than the verdict, so nothing a reader needs in
+    order to know what happened is hidden — only the reasoning that establishes it.
+    """
     return f"""  <dt>{experiment.title}</dt>
   <dd>
     {_paragraphs(experiment.why)}
-    {_paragraphs(experiment.finding)}
     <p class="hint">Measured effect: <strong>{experiment.verdict}</strong>.</p>
+    <details class="more">
+      <summary>What the folds said</summary>
+      {_paragraphs(experiment.finding)}
+    </details>
   </dd>
 """
 
@@ -173,14 +186,14 @@ def _multiplicity_note() -> str:
     expected = ab.expected_by_chance(
         MEASURED_COMPARISONS, config.CV_SPLITS, MEASURED_TIED_FOLDS / MEASURED_SCORED_FOLDS
     )
-    return f"""Two of the results above came out ahead in every period that separated them,
-  and neither is the deployed model. Read them against how many chances there were: the run
-  made <strong>{MEASURED_COMPARISONS}</strong> comparisons in all, and with
-  {MEASURED_TIED_FOLDS} of its {MEASURED_SCORED_FOLDS} periods too close to call, a run that
-  changed nothing at all would be expected to produce about <strong>{expected}</strong> such
-  clean results anyway. So the count is what chance gives, and neither result is evidence on
-  its own. The one that carries any weight is the one a physical argument named
-  <em>before</em> it was measured — and it belongs to a model this page does not serve."""
+    return f"""Two results above came out ahead in every period that separated them, and
+  neither belongs to the deployed model. Weigh them against the number of chances: this run
+  made <strong>{MEASURED_COMPARISONS}</strong> comparisons, and with {MEASURED_TIED_FOLDS} of
+  its {MEASURED_SCORED_FOLDS} periods too close to call, a change that did nothing at all
+  would be expected to produce about <strong>{expected}</strong> such clean results anyway.
+  The count is what chance gives, so neither is evidence on its own. The one that carries any
+  weight is the one a physical argument named <em>before</em> it was measured — and it belongs
+  to a model this page does not serve."""
 
 
 def render(metadata: dict) -> str:
@@ -190,13 +203,12 @@ def render(metadata: dict) -> str:
     entries = "".join(_entry(experiment) for experiment in EXPERIMENTS)
     # No count in the prose: "Three changes below" would still ship on the day a fourth entry
     # is added, with every test here green. The list states its own length.
-    return f"""  <h3>What was measured and not shipped</h3>
-  <p>The changes below were argued for on reasoning that still looks sound, tested against the
-  same rolling folds the headline error comes from, and dropped. They are here because a
-  forecast is easier to trust from a project that publishes what did not work — and
-  because measuring them is what caught two errors this page was publishing at the time: an
-  improvement figure that paired an all-seasons error with a summer gain, and a single error
-  figure standing in for twenty-four different tasks.</p>
+    return f"""  <h2>What was measured and not shipped</h2>
+  <p>Each change below was argued for, measured on the same rolling folds as the headline
+  error, and dropped. Publishing them is not modesty: measuring them is what caught two
+  defects this page was shipping at the time — an improvement figure that paired an
+  all-seasons error with a summer gain, and one error figure standing in for twenty-four
+  different tasks.</p>
   <dl class="rejected">
 {entries}  </dl>
   <p>{_multiplicity_note()}</p>
