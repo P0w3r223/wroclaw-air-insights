@@ -860,9 +860,35 @@ def _render_page(
     .card {{ padding: 16px 14px; }}
     table {{ display: block; overflow-x: auto; }}
     /* Numbers must not wrap; the label column may. Holding the whole table on one line is
-       what pushed the four-column tables into a scroll they do not need — only the
-       seven-column lead table should have to scroll on a phone. */
+       what pushed the four-column tables into a scroll they do not need. Freeing the fixed
+       numeric widths gets them there on a wide phone; a narrow one needs the block below
+       as well. */
     .metrics th + th, .metrics td + td {{ width: auto; white-space: nowrap; }}
+  }}
+
+  /* Measured at a real 390 px viewport (CDP device emulation — a narrow `--window-size`
+     screenshot is cropped, not reflowed, and shows overflow that is not there): all four
+     tables were scrolling, not just the seven-column one. Two causes. The regime table's
+     own width rule outranks the override above on specificity, so it kept a fixed 5.5rem
+     per column down to the narrowest screen; and at body size with 10px cell padding,
+     five columns of numbers need ~427 px against the ~336 a 390 px phone leaves inside a
+     card. Tighter type and padding buy back the difference. Headers wrap from here down —
+     "Typical width (µg/m³)" set on one line is wider than the column it labels — while
+     the numbers still never do.
+
+     Where this lands, measured rather than hoped: at 390 px the lead table is now the only
+     one that scrolls, which is the whole point of the rule. Below ~370 px the metrics table
+     starts scrolling again, because its floor is the longest unbreakable word in the label
+     column — a model name — and the only ways under that are hyphenating "HistGradient-
+     Boosting" mid-word or type below 12 px. A scrolling table is the better of those
+     three. */
+  @media (max-width: 480px) {{
+    .metrics {{ font-size: 0.82rem; }}
+    .metrics th, .metrics td {{ padding: 4px 5px; }}
+    .metrics th, .metrics th + th {{ white-space: normal; }}
+    .metrics td + td {{ white-space: nowrap; }}
+    .metrics th + th, .metrics td + td,
+    .metrics.regimes th + th, .metrics.regimes td + td {{ width: auto; }}
   }}
 </style>
 </head>
