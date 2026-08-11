@@ -91,7 +91,7 @@ def render(metadata: dict) -> str:
         regime.get("detection") or {}, elevated, threshold, naive.get("detection") or {}
     )
 
-    return f"""  <h3>How it behaves when the air is actually bad</h3>
+    return f"""  <h2>How it behaves when the air is actually bad</h2>
   <table class="metrics regimes">
     <thead>
       <tr><th>Hours</th><th>MAE ↓</th><th>Bias →0</th><th>Naive MAE</th><th>Naive bias</th></tr>
