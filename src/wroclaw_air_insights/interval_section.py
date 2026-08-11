@@ -117,8 +117,14 @@ def render(metadata: dict) -> str:
             if len(drawn) < len(rows)
             else ""
         )
+        # The published band is symmetric around the reading, so on a clean day its lower edge
+        # falls below zero. The chart draws it at zero instead, and this is where that is said
+        # — the width in the table beside it is the unclipped one, and the two would otherwise
+        # contradict each other for any reader who measured the shading with a ruler.
         outcome = f"""<p class="hint">The band on the chart above is drawn over {served}, and
-  only there.{withheld_note}</p>"""
+  only there. Where its lower edge would fall below zero the chart draws it at zero, since a
+  negative concentration is not a reading; the width in the table is the unclipped
+  one.{withheld_note}</p>"""
 
     misses = _nearest_miss_note(
         {name: model_bands.get(name) for name in ("quantile", "residual")},
@@ -138,13 +144,13 @@ def render(metadata: dict) -> str:
             "predicted it would."
         )
 
-    return f"""  <h3>How sure is it?</h3>
-  <p>Every number above is a single value, and a single value invites belief in its second
-  digit. An interval says something a reader can check instead: {_an(_pct(nominal))} band
-  claims that {_pct(nominal)} of measured hours land inside it. That claim was tested on
-  rolling held-out folds — hours the bands were not fitted on — and a band is drawn here only
-  if it came back close to what it promises, on the average <em>and</em> in every period
-  separately.{misses}{drift}</p>
+    return f"""  <h2>How sure is it?</h2>
+  <p>A single value invites belief in its second digit; an interval says something a reader
+  can check instead:
+  {_an(_pct(nominal))} band claims that {_pct(nominal)} of measured hours land inside it.
+  That claim was tested on rolling held-out folds the bands were not fitted on, and a band is
+  drawn here only if it came back close to what it promises — on the average <em>and</em> in
+  every period separately.{misses}{drift}</p>
   <table class="metrics">
     <thead>
       <tr><th>Interval</th><th>Measured coverage</th><th>Typical width (µg/m³)</th>
