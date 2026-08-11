@@ -55,6 +55,9 @@ def _flatness_caveat(scored: dict, shown: list[int]) -> str:
     column reads 6.97 six times would be explaining a discrepancy the reader cannot see, and
     omitting it where the column reads 6.97 and 6.96 is the defect this project keeps
     catching — a sentence its neighbouring number refutes.
+
+    It sits under the table rather than in the prose above it: it explains a column, and as
+    an aside mid-paragraph it interrupted the one argument the section is making.
     """
     printed = {
         round(value, 2)
@@ -64,7 +67,7 @@ def _flatness_caveat(scored: dict, shown: list[int]) -> str:
     if len(printed) < 2:
         return ""
     return (
-        " Where the column below still moves by a hundredth, that is the scoring set rather "
+        " Where the model's column still moves by a hundredth, that is the scoring set rather "
         "than the model: a lead whose origin reading is missing drops that hour from every "
         "predictor at once, so the average is taken over slightly different hours."
     )
@@ -109,36 +112,35 @@ def _specialist_note(policy: dict, crossover: int) -> str:
         if not all(isinstance(v, int) for v in (measured, needed)) or clearing is None:
             return ""
         return f"""<p class="hint">The specialist column is a measurement that did not ship on
-  this run. Only {len(clearing)} of the {measured} leads beat both of the other predictors by
-  enough to earn their hours, against the {needed} the decision required, so the forecast is
-  served by the two predictors above and this run publishes the null. The bar is fixed and the
-  measurement is repeated on every retrain, so what this column says can change with the
-  training window — which is exactly what a bar set in advance is for.</p>"""
+  this run. Only {len(clearing)} of the {measured} leads beat both other predictors by enough
+  to earn their hours, against the {needed} the decision required — so this run publishes the
+  null and the two predictors above serve the chart. The bar is fixed and re-measured on every
+  retrain, which is what a bar set in advance is for.</p>"""
 
     start, end = int(band[0]), int(band[1])
     folds_required = gate.get("folds_required")
 
     bar = (
-        f" Every hour in that range beat <em>both</em> of the other two predictors on at least "
-        f"{folds_required} of {n_folds} rolling folds — not the better of the two, which would "
-        f"have let the range be chosen after the fact, but each of them separately."
+        f" Every hour in that range beat <em>both</em> other predictors on at least "
+        f"{folds_required} of {n_folds} rolling folds — each separately, not the better of the "
+        f"two, which would have let the range be chosen after the fact."
         if isinstance(folds_required, int) and isinstance(n_folds, int)
         else ""
     )
     # Only claimed when the two measured boundaries actually overlap, because they need not:
     # a band starting above the crossover takes nothing from the naive rule.
     reclaimed = (
-        " Some of those hours are ones the naive rule would otherwise have kept — a specialist "
-        "takes an hour from it only by beating it there."
+        " Some are hours the naive rule would otherwise have kept — a specialist takes one "
+        "from it only by beating it there."
         if crossover >= start
         else ""
     )
     return f"""<p class="hint">From +{start} h to +{end} h the forecast comes from a predictor
-  fitted for <em>that lead alone</em>. It is the same algorithm on the same data, with one
-  difference that matters: at a {start}-hour lead it may use the reading from {start} hours
-  ago, while the model above is trained on the 24-hour task and its freshest input is a full
-  day old.{bar}{reclaimed} The advantage shrinks as the lead grows — by +24 h the two have the
-  same input and are the same forecast, which is the row to check this claim against.</p>"""
+  fitted for <em>that lead alone</em> — same algorithm, same data, one difference that
+  matters: at a {start}-hour lead it may use the reading from {start} hours ago, while the
+  model above is trained on the 24-hour task and its freshest input is a full day
+  old.{bar}{reclaimed} The advantage shrinks as the lead grows: by +24 h the two share an
+  input and are the same forecast, which is the row to check this claim against.</p>"""
 
 
 def served_note(policy: dict, scored: dict, crossover: int) -> str:
@@ -238,15 +240,14 @@ def render(metadata: dict) -> str:
     naive_elsewhere = baseline.LABELS["persistence"]
     flat = _flatness_caveat(scored, shown)
 
-    return f"""  <h3>How far ahead, and what that costs</h3>
+    return f"""  <h2>How far ahead, and what that costs</h2>
   <img src="data:image/png;base64,{chart}" alt="Forecast error against lead time">
   <p>The main model is trained on one task — predict 24 hours ahead — and the lead time is
   not one of its inputs, so <em>its</em> line is flat: the same error at every hour of the
-  chart above.{flat} Neither of the other two is. “The air will stay as it is now” is a strong
-  forecast one hour out and a weak one a day out, and a predictor fitted for a single lead
-  gets a fresher reading to work from the closer that lead is. The single error figure this
-  page headlines therefore describes the 24-hour task, and the chart above is why no one
-  figure could describe the rest.</p>
+  chart above. Neither of the other two is. “The air will stay as it is now” is strong
+  one hour out and weak a day out, and a predictor fitted for a single lead works from a
+  fresher reading the closer that lead is. The error this page headlines describes the
+  24-hour task; the chart is why one figure could not describe the rest.</p>
   <table class="metrics">
     <thead>
       <tr><th>Lead</th><th>Model MAE ↓</th><th>Specialist MAE ↓</th><th>Naive MAE ↓</th>
@@ -256,10 +257,14 @@ def render(metadata: dict) -> str:
 {rows}    </tbody>
   </table>
   <p class="hint">Every predictor scored on the same rolling folds and the same rows.
-  “Paired Δ” is the naive rule's error minus the model's — positive means the model is
-  ahead — and “folds won” is how many of them it actually won, so those two columns compare
-  the first and third only. A gap that does not hold fold by fold is noise, however large its
-  average looks. The naive rule here is the reading in hand at the moment of issue; at +24 h
-  that is the same prediction as “{naive_elsewhere}”, the rule quoted in the table further up,
-  which is why both come out at the same number there.</p>
+  “Paired Δ” is the naive rule's error minus the model's — positive means the model is ahead
+  — and “folds won” counts the folds it actually won; both columns compare the first and
+  third only. A gap that does not hold fold by fold is noise, however large its average
+  looks.{flat}</p>
+  <details class="more">
+    <summary>Why the +24 h row matches the table further up</summary>
+    <p>The naive rule on this chart is the reading in hand at the moment of issue. At +24 h
+    that is the same prediction as “{naive_elsewhere}”, the rule quoted in the headline
+    table, so the two necessarily come out at the same number there.</p>
+  </details>
   {served}"""

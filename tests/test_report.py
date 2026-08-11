@@ -1224,3 +1224,60 @@ def test_interval_section_reads_the_article_off_the_number():
     html = report.interval_section.render(_fresh_metadata(intervals=_intervals()))
     assert "an 80% band" in html
     assert "a 80%" not in html
+
+
+# --- the page frame: headline tiles, jump list, one card per section ------------
+def test_stat_tiles_lead_with_the_figures_the_sections_below_argue_for():
+    tiles = report._stat_tiles(_fresh_metadata(), peak=18.5)
+    # Each tile has to agree with the section it summarises: the miss and its spread come
+    # from cross-validation, the gain from the CV comparison, the hours from the split.
+    assert "18.5 µg/m³" in tiles
+    assert "6.50 µg/m³" in tiles
+    assert "± 1.25 across rolling folds" in tiles
+    assert "200" in tiles
+
+
+def test_stat_tiles_drop_a_figure_the_bundle_does_not_carry():
+    """A gap is quieter than an n/a set in 1.4rem type — and this strip is read first."""
+    tiles = report._stat_tiles({}, peak=None)
+    assert tiles == ""
+
+
+def test_stat_tiles_never_print_a_float_repr(leaks):
+    unusable = _fresh_metadata(
+        cross_validation={"mae_mean": float("nan"), "mae_std": None},
+        mae_improvement_pct_cv=float("nan"),
+    )
+    assert not leaks(report._stat_tiles(unusable, peak=float("nan")))
+
+
+def test_contents_offers_only_sections_that_are_on_the_page():
+    """A jump list is a promise. A link to a section a legacy bundle did not render lands
+    the reader nowhere, which is worse than not offering the link."""
+    present = {"accuracy": "<h2>a</h2>", "horizon": "", "glossary": "<details></details>"}
+    contents = report._contents(present)
+    assert 'href="#accuracy"' in contents
+    assert 'href="#glossary"' in contents
+    assert "horizon" not in contents
+
+
+def test_contents_and_sections_agree_on_what_the_page_holds():
+    html = _page(_fresh_metadata())
+    anchors = re.findall(r'<section class="card" id="([a-z]+)"', html)
+    linked = re.findall(r'<nav class="toc"[^>]*>(.*?)</nav>', html, flags=re.S)
+    assert anchors, "the page rendered no sections at all"
+    assert linked, "the page rendered sections but no way to reach them"
+    assert re.findall(r'href="#([a-z]+)"', linked[0]) == anchors
+
+
+def test_sections_keep_page_order_rather_than_dict_order():
+    present = {"glossary": "<p>g</p>", "accuracy": "<p>a</p>", "regime": "<p>r</p>"}
+    order = re.findall(r'id="([a-z]+)"', report._sections(present))
+    assert order == ["accuracy", "regime", "glossary"]
+
+
+def test_metric_headers_are_not_upper_cased_by_the_stylesheet():
+    """`text-transform: uppercase` renders µ as a capital mu, so "(µg/m³)" reads as
+    "(MG/M³)" — a unit a thousand times too large, in a header the page cannot annotate."""
+    html = _page(_fresh_metadata())
+    assert "text-transform: uppercase" not in html

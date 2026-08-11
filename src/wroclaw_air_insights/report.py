@@ -140,12 +140,12 @@ def _backtest_section(metadata: dict) -> str:
     ).days
     span = f"{covered} days" if covered >= 2 else ("day" if covered == 1 else "hours")
     hours = len(stamps)
-    return f"""  <h3>The last {span} of the test window, hour by hour</h3>
+    return f"""  <h2>The last {span} of the test window, hour by hour</h2>
   <img src="data:image/png;base64,{chart}" alt="Forecast against measured PM2.5">
-  <p class="hint">{hours:,} hours the model had never seen. These come from the
-  chronologically-trained model, not from the one serving the chart at the top of this
-  page — that one is refitted on all available data, so plotting <em>its</em> fit over
-  recent days would be showing it hours it learned from.</p>"""
+  <p class="hint">{hours:,} hours the model had never seen — from the chronologically-trained
+  model, not the one serving the chart at the top. That one is
+  refitted on all available data, so plotting <em>its</em> fit over recent days would be
+  showing it hours it learned from.</p>"""
 
 
 
@@ -204,8 +204,8 @@ def _metrics_table(metadata: dict) -> str:
   </table>
   <p class="hint">{scope}
   MAE, RMSE and bias are in µg/m³ (↓ lower is better); R² is a ratio (↑ higher is better).
-  Bias is the <em>signed</em> average error — positive means the forecast runs high — and
-  it is the one column where zero, not lower, is the target.</p>"""
+  Bias is the <em>signed</em> average error — positive means the forecast runs high — so zero,
+  not lower, is its target.</p>"""
 
 
 def _verdict(metadata: dict) -> str:
@@ -230,9 +230,8 @@ def _verdict(metadata: dict) -> str:
             else "Averaged over the whole year"
         )
         headline = (
-            f"{across}, the forecast lands on average "
-            f"<strong>{cv_mae:.2f}{spread} µg/m³</strong> away from what was actually "
-            f"measured."
+            f"{across}, the forecast lands <strong>{cv_mae:.2f}{spread} µg/m³</strong> from "
+            f"what was actually measured."
         )
     else:
         headline = ""
@@ -245,7 +244,7 @@ def _verdict(metadata: dict) -> str:
             else ""
         )
         caveat = (
-            f" On the single most recent held-out window alone{when} it does better — "
+            f" On the most recent held-out window alone{when} it does better — "
             f"<strong>{split_mae:.2f} µg/m³</strong> — because that window is summer, and "
             f"summer air is far easier to predict than a winter smog episode. The table "
             f"below uses that window; this sentence is the number to trust."
@@ -530,6 +529,95 @@ def _glossary(metadata: dict) -> str:
 </details>"""
 
 
+def _stat_tile(value: str, what: str, why: str) -> str:
+    return f"""  <div class="stat"><b>{value}</b><span class="what">{what}</span>
+    <span class="why">{why}</span></div>
+"""
+
+
+def _stat_tiles(metadata: dict, peak: object) -> str:
+    """The handful of figures a reader should leave with, before any of the argument.
+
+    Every tile is computed from the same metadata the sections below print, so the strip
+    cannot drift from them. A figure this bundle does not carry drops its tile rather than
+    printing ``n/a`` in 1.4rem type — the strip is the one place on the page where a gap
+    would be louder than the number.
+
+    ``peak`` is gated here rather than trusted from the caller. It arrives from the forecast
+    frame instead of from the bundle, so it is the one figure on the strip that has not
+    already passed a gate, and "nan µg/m³" set in the largest type on the page is exactly the
+    failure the gate exists to prevent.
+    """
+    tiles = []
+    peak = _number(peak)
+    if peak is not None:
+        tiles.append(_stat_tile(
+            f"{peak:.1f} µg/m³", "highest hour ahead",
+            f"WHO 24 h guideline {config.PM25_WHO_DAILY:.0f} µg/m³",
+        ))
+
+    cv = metadata.get("cross_validation") or {}
+    mae, std = _number(cv.get("mae_mean")), _number(cv.get("mae_std"))
+    if mae is not None:
+        # The spread rides in the caption rather than in the headline number: "6.85 ± 2.48
+        # µg/m³" is too long for the tile and wrapped its unit onto a second line, which made
+        # one tile taller than the three beside it.
+        spread = (
+            f"± {std:.2f} across rolling folds, year-round"
+            if std is not None
+            else "year-round, on rolling folds"
+        )
+        tiles.append(_stat_tile(f"{mae:.2f} µg/m³", "typical miss", spread))
+
+    gain = _number(metadata.get("mae_improvement_pct_cv"))
+    if gain is not None:
+        tiles.append(_stat_tile(
+            f"{gain:.1f}%", "smaller miss than the naive rule", "scored on those same folds",
+        ))
+
+    n_test = metadata.get("n_test")
+    if isinstance(n_test, int):
+        tiles.append(_stat_tile(
+            f"{n_test:,}", "held-out hours scored", "never seen during training",
+        ))
+
+    return f'<div class="stats">\n{"".join(tiles)}</div>' if tiles else ""
+
+
+# Every section that can appear below the fold, in page order: the anchor it is reached by
+# and the word the contents strip calls it. Sections that rendered empty — a bundle without
+# intervals, a run with no rejected experiments — are dropped from both, so the strip can
+# never offer a link to a section that is not on the page.
+_SECTION_LABELS = (
+    ("accuracy", "Accuracy"),
+    ("horizon", "Lead time"),
+    ("interval", "Uncertainty"),
+    ("backtest", "Backtest"),
+    ("regime", "Bad-air hours"),
+    ("rejected", "Not shipped"),
+    ("glossary", "Metrics explained"),
+)
+
+
+def _contents(present: dict[str, str]) -> str:
+    """A jump list over the sections that actually rendered."""
+    links = "".join(
+        f'<a href="#{anchor}">{label}</a>'
+        for anchor, label in _SECTION_LABELS
+        if present.get(anchor)
+    )
+    return f'<nav class="toc" aria-label="Sections on this page">{links}</nav>' if links else ""
+
+
+def _sections(present: dict[str, str]) -> str:
+    """Each rendered section as its own card, in page order."""
+    return "\n".join(
+        f'<section class="card" id="{anchor}">\n{present[anchor]}\n</section>'
+        for anchor, _ in _SECTION_LABELS
+        if present.get(anchor)
+    )
+
+
 def _render_page(
     station_id: int,
     forecast_df: pd.DataFrame,
@@ -562,21 +650,31 @@ def _render_page(
     # current reading repeated: on a falling day this would otherwise label a measurement
     # as a forecast.
     peak = _number(forecast_df["predicted_pm25"].max())
-    peak_value = f"<strong>{peak:.1f} µg/m³</strong>" if peak is not None else "n/a"
     generated = generated_at.strftime("%Y-%m-%d %H:%M %Z")
     freshness = _freshness_note(forecast_df, generated_at)
 
-    metrics_table = _metrics_table(metadata)
-    verdict = _verdict(metadata)
-    skill_line = _skill_line(metadata)
-    horizon_section = _horizon_section(metadata)
-    interval_html = interval_section.render(metadata)
-    rejected = _rejected_section(metadata)
-    backtest_section = _backtest_section(metadata)
-    regime_html = regime_section.render(metadata)
-    glossary = _glossary(metadata)
     n_test = metadata.get("n_test")
     tested_on = f" ({n_test:,} held-out hours)" if isinstance(n_test, int) else ""
+    accuracy = f"""  <h2>How good is the forecast?</h2>
+  <p>Always trained on earlier hours and scored on later ones{tested_on} — a chronological
+  split, never a random one. The model serving the chart above uses these settings but is
+  refitted on all available data, so the figures here describe the method rather than that
+  exact artefact.</p>
+  {_verdict(metadata)}
+{_metrics_table(metadata)}
+  {_skill_line(metadata)}"""
+    present = {
+        "accuracy": accuracy,
+        "horizon": _horizon_section(metadata),
+        "interval": interval_section.render(metadata),
+        "backtest": _backtest_section(metadata),
+        "regime": regime_section.render(metadata),
+        "rejected": _rejected_section(metadata),
+        "glossary": _glossary(metadata),
+    }
+    stats = _stat_tiles(metadata, peak)
+    contents = _contents(present)
+    sections = _sections(present)
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -588,48 +686,85 @@ def _render_page(
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body {{ font: 16px/1.55 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  :root {{ --ink: #1c2430; --muted: #667085; --line: #e6eaf2; --accent: {_ACCENT};
+          --paper: #ffffff; --bg: #f5f7fb; }}
+  * {{ box-sizing: border-box; }}
+  body {{ font: 16px/1.6 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
          -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-         max-width: 820px; margin: 0 auto; padding: 32px 20px 56px; color: #1c2430; }}
-  h1 {{ margin-bottom: 2px; font-weight: 700; letter-spacing: -0.01em; }}
-  h2 {{ font-weight: 600; }}
-  .sub {{ color: #667085; margin-top: 0; }}
-  .badge {{ display: inline-block; padding: 0.4rem 0.9rem; border-radius: 999px;
-           color: #fff; font-weight: 600; background: {colour}; }}
-  .card {{ border: 1px solid #e3e7ee; border-radius: 12px; padding: 18px 20px; margin: 18px 0; }}
+         max-width: 900px; margin: 0 auto; padding: 28px 18px 56px;
+         color: var(--ink); background: var(--bg); }}
+  h1 {{ margin: 0 0 2px; font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; }}
+  h2 {{ margin: 0 0 10px; font-size: 1.12rem; font-weight: 600; letter-spacing: -0.01em; }}
+  h3 {{ font-weight: 600; font-size: 1rem; margin: 24px 0 8px; }}
+  p {{ margin: 10px 0; }}
+  .sub {{ color: var(--muted); margin: 0 0 16px; }}
+  .badge {{ display: inline-block; padding: 0.34rem 0.8rem; border-radius: 999px;
+           color: #fff; font-weight: 600; font-size: 0.85rem; background: {colour}; }}
+  .card {{ background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+          padding: 20px 22px; margin: 16px 0; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); }}
+  section.card {{ scroll-margin-top: 62px; }}
   table {{ border-collapse: collapse; width: 100%; }}
   th, td {{ text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef1f6; }}
-  img {{ max-width: 100%; height: auto; border-radius: 8px; }}
+  img {{ display: block; max-width: 100%; height: auto; border-radius: 8px; margin: 4px 0; }}
   code {{ background: #eef1f6; padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }}
-  footer {{ color: #667085; font-size: 0.85rem; margin-top: 24px; }}
-  a {{ color: #2563eb; }}
+  footer {{ color: var(--muted); font-size: 0.85rem; margin-top: 24px; text-align: center; }}
+  a {{ color: var(--accent); }}
 
-  /* --- Model quality: metrics table, verdict line, collapsible glossary --- */
-  .metrics th {{ font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em;
-                color: #667085; font-weight: 600; }}
+  /* --- The headline figures, above the argument that earns them --- */
+  .stats {{ display: grid; gap: 12px; margin: 16px 0;
+           grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); }}
+  .stat {{ background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+          padding: 13px 15px; }}
+  .stat b {{ display: block; font-size: 1.4rem; font-weight: 600; letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums; }}
+  .stat .what {{ display: block; font-size: 0.85rem; margin-top: 2px; }}
+  .stat .why {{ display: block; color: var(--muted); font-size: 0.76rem; margin-top: 3px; }}
+
+  /* --- Jump list: the page is long by design, so it says what is on it --- */
+  nav.toc {{ position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 7px;
+            padding: 10px 0 9px; margin: 4px 0 0; background: var(--bg); }}
+  nav.toc a {{ text-decoration: none; font-size: 0.8rem; color: var(--muted);
+              background: var(--paper); border: 1px solid var(--line);
+              border-radius: 999px; padding: 4px 11px; }}
+  nav.toc a:hover {{ color: var(--accent); border-color: #c8d6f6; }}
+
+  /* --- Model quality: metrics table, verdict line, collapsible detail --- */
+  /* Not uppercased. A header reading "Typical width (µg/m³)" renders as "(MG/M³)" under
+     text-transform — the micro sign upper-cases to a capital mu, which is indistinguishable
+     from an M. The column then names a unit a thousand times too large. */
+  .metrics th {{ font-size: 0.85rem; letter-spacing: 0.01em; white-space: nowrap;
+                color: var(--muted); font-weight: 600; }}
   .metrics th + th, .metrics td + td {{ text-align: right;
                 font-variant-numeric: tabular-nums; width: 6.5rem; }}
   .metrics tr.deployed td {{ font-weight: 600; }}
   .metrics.regimes th + th, .metrics.regimes td + td {{ width: 5.5rem; }}
-  .metrics.regimes td:nth-child(4), .metrics.regimes td:nth-child(5) {{ color: #667085; }}
+  .metrics.regimes td:nth-child(4), .metrics.regimes td:nth-child(5) {{ color: var(--muted); }}
   .metrics.regimes td .hint {{ font-size: 0.78rem; }}
-  h3 {{ font-weight: 600; font-size: 1.02rem; margin: 28px 0 10px; }}
-  .hint {{ color: #667085; font-size: 0.82rem; margin: 8px 0 0; }}
+  .hint {{ color: var(--muted); font-size: 0.84rem; margin: 8px 0 0; }}
   .skill {{ margin: 14px 0 0; font-size: 0.95rem; }}
-  .verdict {{ background: #f6f8fc; border-left: 3px solid {_ACCENT};
+  .verdict {{ background: #f4f7fd; border-left: 3px solid var(--accent);
              border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 16px 0 4px; }}
-  details.glossary {{ margin-top: 14px; border-top: 1px solid #eef1f6; padding-top: 12px; }}
-  details.glossary > summary {{ cursor: pointer; font-weight: 600; color: {_ACCENT};
+
+  /* One disclosure pattern for the whole page: the claim and its verdict stay open, the
+     argument that establishes them is one click away. */
+  details.more {{ margin-top: 14px; }}
+  /* The glossary owns its card, so its summary is that card's heading — sized like one
+     rather than like a footnote a reader has to go looking for. */
+  details.glossary > summary {{ font-size: 1.12rem; color: var(--ink); padding: 0; }}
+  details.glossary > summary::before {{ color: var(--accent); }}
+  details > summary {{ cursor: pointer; font-weight: 600; color: var(--accent);
              list-style: none; padding: 4px 0; }}
-  details.glossary > summary::-webkit-details-marker {{ display: none; }}
-  details.glossary > summary::before {{ content: "＋ "; font-weight: 400; }}
-  details.glossary[open] > summary::before {{ content: "－ "; }}
+  details > summary::-webkit-details-marker {{ display: none; }}
+  details > summary::before {{ content: "＋ "; font-weight: 400; }}
+  details[open] > summary::before {{ content: "－ "; }}
+  details.more > summary {{ font-size: 0.86rem; font-weight: 500; }}
+  details.more > p {{ font-size: 0.9rem; color: #3b4657; margin: 8px 0; }}
   details.glossary dl {{ margin: 12px 0 0; }}
   details.glossary dt {{ font-weight: 600; margin-top: 18px; }}
   details.glossary dd {{ margin: 6px 0 0; padding-left: 14px;
              border-left: 2px solid #eef1f6; }}
   details.glossary dd p {{ margin: 6px 0; }}
-  .unit {{ color: #667085; font-weight: 400; font-size: 0.85em; }}
+  .unit {{ color: var(--muted); font-weight: 400; font-size: 0.85em; }}
 
   /* --- Measured and rejected: same shape as the glossary, but not folded away --- */
   dl.rejected {{ margin: 14px 0 0; }}
@@ -638,6 +773,18 @@ def _render_page(
   dl.rejected dd p {{ margin: 6px 0; font-size: 0.93rem; }}
   .note {{ background: #fbfbf9; border: 1px solid #eef1f6; border-radius: 8px;
           padding: 12px 14px; margin-top: 16px; font-size: 0.93rem; }}
+
+  /* The lead-time table is seven columns wide and a phone is not. Scrolling one table
+     beats reflowing every number into an unreadable column. */
+  @media (max-width: 640px) {{
+    body {{ padding: 20px 12px 44px; }}
+    .card {{ padding: 16px 14px; }}
+    table {{ display: block; overflow-x: auto; }}
+    /* Numbers must not wrap; the label column may. Holding the whole table on one line is
+       what pushed the four-column tables into a scroll they do not need — only the
+       seven-column lead table should have to scroll on a phone. */
+    .metrics th + th, .metrics td + td {{ width: auto; white-space: nowrap; }}
+  }}
 </style>
 </head>
 <body>
@@ -647,27 +794,12 @@ def _render_page(
 <div class="card">
   <p>Current air-quality index: <span class="badge">{category}</span></p>
   <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
-  <p>Highest hour ahead: {peak_value}
-     (WHO 24-hour guideline: {config.PM25_WHO_DAILY} µg/m³).</p>
   {freshness}
 </div>
 
-<div class="card">
-  <h2>How good is the forecast?</h2>
-  <p>The model is always trained on earlier hours and scored on later ones{tested_on} — a
-  chronological split, never a random one. The model that serves the chart above uses these
-  settings but is refitted on all available data, so the figures below describe the method
-  rather than that exact artefact.</p>
-  {verdict}
-{metrics_table}
-  {skill_line}
-{horizon_section}
-{interval_html}
-{backtest_section}
-{regime_html}
-{rejected}
-{glossary}
-</div>
+{stats}
+{contents}
+{sections}
 
 <footer>
   Generated {generated} ·
