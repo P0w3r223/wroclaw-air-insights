@@ -25,7 +25,8 @@ SQL database, an insights report, and a **24-hour PM2.5 forecast**.
    answers the earliest hours, a predictor fitted for one specific lead answers a measured
    middle band, and the 24-hour model answers the rest.
 5. **Publish** — a scheduled GitHub Actions job refreshes the data daily and deploys an
-   HTML report (live forecast + air-quality index) to GitHub Pages.
+   HTML report (live forecast + the station's PM2.5 air-quality index) to GitHub Pages,
+   with every figure on it recomputed from that run rather than carried over.
 6. **Grade itself afterwards** — every forecast the page publishes is appended to an
    append-only log on a separate `forecast-log` branch, and scored once the hours it
    describes have been measured. That is the only evidence here that was fixed *before*
@@ -333,6 +334,22 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/01_analysis.ipynb
 A daily GitHub Actions job refreshes the data, retrains, and deploys an HTML report
 (live 24h forecast + current air-quality index) to **GitHub Pages**:
 <https://p0w3r223.github.io/wroclaw-air-insights/>.
+
+The page opens by saying what the project is and where the code lives, then leads with the
+next 24 hours and argues for them: how large the error is against two references, what
+forecasting further ahead costs, which predictor serves which hours, how wide an interval
+the coverage check allowed, and how the model behaves when the air is actually bad. Two
+things it carries deliberately — the experiments that were measured and **not** shipped, and
+a glossary of MAE / RMSE / R² for a reader who does not have one. Every number there comes
+from that run's own metadata, which is why this file quotes none of them as current.
+
+**The index badge is the PM2.5 sub-index, not the station's overall index.** GIOŚ derives
+the overall one from whichever pollutant it names critical that hour; on a summer afternoon
+that is ozone, which al. Wiśniowa does not measure, so the overall index reads *Brak indeksu*
+on a routine daily cycle while the PM2.5 sub-index beside it is measured and fine. The page
+leads with the pollutant it forecasts and demotes the overall index to the note underneath —
+worth knowing before reading that badge, and written up with the payload's other trap in
+[`docs/research/data-sources.md`](docs/research/data-sources.md).
 
 The same job appends that forecast to `forecasts.jsonl` on the orphan `forecast-log`
 branch — a data branch, never merged into `main`, so a daily commit does not bury the code

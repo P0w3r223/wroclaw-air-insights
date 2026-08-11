@@ -1,6 +1,8 @@
 # Data Sources — wroclaw-air-insights
 
 Date: 2026-07-17
+Updated: 2026-08-11 — the air-quality index endpoint, added after two of its behaviours
+reached the published page as a defect
 Status: accepted
 Author: P0w3r223 + Claude
 Related to: portfolio plan (project A1), forecast module
@@ -20,6 +22,7 @@ differentiator), and **weather features come from Open-Meteo**.
 | Target PM2.5 — recent / live | GIOŚ **API v1/rest** `data/getData/{sensorId}` | Last ~3 days, hourly; used for refresh / inference |
 | Weather features — history (training) | Open-Meteo **Historical Forecast API** | Same models as live forecast → no train/serve distribution shift |
 | Weather features — forecast (24h) | Open-Meteo **Forecast API** | Consistent variables incl. `boundary_layer_height` |
+| Current air-quality index (page badge) | GIOŚ **API** `aqindex/getIndex/{stationId}` | The station's own index, overall + per pollutant; display only, never a model input |
 
 Weather is fetched for a single point (Wrocław ≈ 51.11, 17.03), hourly, `timezone=Europe/Warsaw`.
 
@@ -46,6 +49,31 @@ dead endpoints): `https://api.gios.gov.pl/pjp-api/v1/rest/`. Response is JSON-LD
 ```
 `Wartość` is a float **or `null`** (missing readings — must be handled). `Data` is local time.
 
+**GIOŚ `aqindex/getIndex/{stationId}`** — everything under key `"AqIndex"`, one flat object
+carrying the overall index plus a sub-index per pollutant the station measures:
+```json
+{ "AqIndex": {
+    "Wartość indeksu": -1,
+    "Nazwa kategorii indeksu": "Brak indeksu",
+    "Kod zanieczyszczenia krytycznego": "OZON",
+    "Wartość indeksu dla wskaźnika PM2.5": 0,
+    "Nazwa kategorii indeksu dla wskażnika PM2.5": "Bardzo dobry" } }
+```
+Two properties of this payload were each worth a defect on the live page (fixed in PR #17):
+
+- **The overall index is not the station's air quality.** It is carried by whichever pollutant
+  GIOŚ names critical that hour. On a summer afternoon that is ozone, which al. Wiśniowa does
+  not measure — so `Wartość indeksu` goes to `-1` / `"Brak indeksu"` on a routine daily cycle
+  while the PM2.5 **sub-index beside it is measured and fine**. Station 114 shows the same
+  mechanism from the other side: an ozone sensor, no PM2.5 one, and an overall index published.
+  Read the sub-index for the pollutant you are actually reporting; treat the overall one as
+  context, and say which is which.
+- **The category key is spelled `wskażnika`** (ż) where the value key beside it says
+  `wskaźnika` (ź). It is a typo in their payload. Parse both spellings, correct one first, so
+  the code keeps working the day GIOŚ fixes it. This one was invisible to a green test suite
+  because the fixture had been written from the *documented* spelling rather than from a
+  captured response — write API fixtures from real payloads.
+
 **Open-Meteo** — parallel arrays under `hourly` (`time` + one array per variable) with
 `hourly_units`; fields include `temperature_2m`, `relative_humidity_2m`, `dew_point_2m`,
 `wind_speed_10m`, `wind_direction_10m`, `surface_pressure`, `precipitation`, `cloud_cover`,
@@ -69,6 +97,9 @@ dead endpoints): `https://api.gios.gov.pl/pjp-api/v1/rest/`. Response is JSON-LD
   a downloaded file before finalizing the parser.
 - **Train/serve shift:** train weather features on Historical Forecast API, not on ERA5 reanalysis,
   so training data matches what the model sees at inference.
+- **Polish keys are not stable, and not always spelled the way the docs spell them** — see the
+  `wskażnika`/`wskaźnika` case above. A missing key returns `None` and propagates silently; a
+  field the page depends on deserves a fixture captured from a live response.
 
 ## Sources
 

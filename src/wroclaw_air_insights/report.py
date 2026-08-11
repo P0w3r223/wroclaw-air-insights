@@ -44,6 +44,26 @@ _AQI_COLORS = {
 }
 _DEFAULT_REPORT_PATH = config.PROJECT_ROOT / "reports" / "site" / "index.html"
 
+# Named once and used by both the opening paragraph and the footer, so the two cannot drift.
+_REPO_URL = "https://github.com/P0w3r223/wroclaw-air-insights"
+
+# What this page is, before the first chart. A reader arriving from a CV has no way to tell a
+# live artefact from a screenshot of one, and the answer is the interesting part: everything
+# below is rebuilt by the same daily run that produced the forecast.
+#
+# Deliberately free of figures. Every number on this page is derived from the run that built
+# it, and a standing sentence carrying one would be the single claim here that a later run
+# could contradict — the failure mode this project keeps re-learning. The one thing it does
+# say about the rejected experiments is that they are *dated*, because unlike the rest of the
+# page they are a record of when they were measured rather than a recomputation.
+_ABOUT = f"""<p class="lede">A portfolio data project, published live: each morning hourly
+GIOŚ measurements and Open-Meteo weather land in a SQLite store, a PM2.5 forecast is
+retrained on the rolling year behind them, and this page is rebuilt from that run. The model
+it selected, the error it measured and the hours each predictor earned are recomputed every
+time — as are the checks that decide what may be published at all, which is why some
+sections below report a measurement that did not ship.
+<a href="{_REPO_URL}">Code, tests and the reasoning behind each decision are on GitHub</a>.</p>"""
+
 # GIOŚ's own wording for "this station has no index right now", and the sub-index this page
 # is actually about.
 _NO_INDEX = "Brak indeksu"
@@ -750,7 +770,11 @@ def _render_page(
   h2 {{ margin: 0 0 10px; font-size: 1.12rem; font-weight: 600; letter-spacing: -0.01em; }}
   h3 {{ font-weight: 600; font-size: 1rem; margin: 24px 0 8px; }}
   p {{ margin: 10px 0; }}
-  .sub {{ color: var(--muted); margin: 0 0 16px; }}
+  .sub {{ color: var(--muted); margin: 0 0 10px; }}
+  /* The opening paragraph: set below body size so it introduces the page without competing
+     with the forecast card, but not in muted grey — it is the one part a first-time reader
+     is meant to actually read. */
+  .lede {{ font-size: 0.95rem; color: #3b4657; margin: 0 0 18px; max-width: 68ch; }}
   .badge {{ display: inline-block; padding: 0.34rem 0.8rem; border-radius: 999px;
            color: #fff; font-weight: 600; font-size: 0.85rem; background: {colour}; }}
   /* The badge is not always the overall index, so when it is a sub-index it says which. */
@@ -845,6 +869,7 @@ def _render_page(
 <body>
 <h1>Wrocław Air Insights</h1>
 <p class="sub">Live 24-hour PM2.5 forecast — {_station_name(station_id)}</p>
+{_ABOUT}
 
 <div class="card">
   <p>Current air-quality index: <span class="badge">{category}</span>{qualifier}</p>
@@ -859,7 +884,7 @@ def _render_page(
 
 <footer>
   Generated {generated} ·
-  <a href="https://github.com/P0w3r223/wroclaw-air-insights">source on GitHub</a> ·
+  <a href="{_REPO_URL}">source on GitHub</a> ·
   Data © GIOŚ, weather © Open-Meteo / CAMS (CC BY 4.0)
 </footer>
 </body>
