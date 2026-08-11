@@ -958,6 +958,26 @@ def test_render_page_names_the_station_it_rendered():
     assert station.name in _page(_fresh_metadata(), station_id=station.id)
 
 
+def test_the_page_says_what_the_project_is_before_the_first_chart():
+    # A reader arriving from a CV cannot tell a live artefact from a screenshot of one, and
+    # the page used to answer neither question: where the data comes from, or where the code
+    # is. The link is asserted because for most of this page's life it existed only in the
+    # footer, in 0.85rem grey.
+    html = _page(_fresh_metadata())
+    lede = html.split('<div class="card">')[0]
+    assert "GIOŚ" in lede and "Open-Meteo" in lede
+    assert report._REPO_URL in lede
+
+
+def test_the_opening_paragraph_carries_no_measured_figure():
+    # The one standing block of prose on an otherwise recomputed page. Any figure written
+    # into it is a claim the next run can contradict without the text noticing — which is
+    # the defect class this project has caught most often. Units and percentages are the
+    # shape those claims take here.
+    assert "µg/m³" not in report._ABOUT
+    assert "%" not in report._ABOUT
+
+
 @pytest.mark.parametrize(
     "aqi,expected_category",
     [
