@@ -733,6 +733,18 @@ def test_horizon_section_names_the_predictor_serving_each_lead():
     assert baseline.LABELS["origin_persistence"] in html
 
 
+def test_the_lead_table_declares_that_it_is_meant_to_scroll():
+    """The one table allowed a negative margin on a phone, and it says so itself.
+
+    Seven columns do not fit 336 px at a readable size. The width check
+    (`.claude/skills/verify-published-page/`) reads this attribute instead of carrying a list
+    of exempt tables, so losing it silently would turn a deliberate decision into a failure —
+    or, worse, turn a real regression on another table into an accepted one.
+    """
+    html = report._horizon_section(_fresh_metadata(horizon=_horizon()))
+    assert '<table class="metrics" data-scroll="by-design">' in html
+
+
 def test_horizon_section_does_not_call_the_model_worse_where_the_table_says_better():
     # The boundary lead can be one the model wins on the mean and loses on the folds. A
     # sentence templated off the crossover alone would flatly say "measurably worse" while
