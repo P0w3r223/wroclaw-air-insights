@@ -127,23 +127,20 @@ expensive step in the command) and the bundle is ~5 MB rather than ~0.4.
 ## Verifying the published page
 
 The page is the deliverable, so a claim about *it* is measured, not eyeballed — the same rule
-the numbers on it live under. Two instruments have already returned confident wrong answers:
+the numbers on it live under. Three facts, each of which cost a wrong answer before it was
+written down:
 
-- **Confirm a deploy on fetched HTML, never on a reload.** `curl` the URL and assert on a
-  build-specific marker (the `Generated …` stamp, or whatever the change added). A browser
-  reload can serve a cached page that agrees with what you hoped.
-- **A phone width needs CDP, not `--window-size`.** Chromium will not create a window under
-  ~500 px, so `msedge --headless --window-size=390,900 --screenshot` renders wide and *crops* —
-  which looks exactly like content overflowing, and was read that way on two consecutive days.
-  Drive it over `--remote-debugging-port` with
-  `Emulation.setDeviceMetricsOverride {width, height, deviceScaleFactor, mobile: true}`; the
-  venv already has `websocket-client` and `requests`. The tell for the artefact: a paragraph
-  wraps identically at 360 px and at 500 px.
-- **`table { width: 100% }` hides how tight a table is.** Rendered width reports the card's
-  width whether there is room to spare or none. Force `width: min-content` per table to read
-  the floor, and size against the *widest realistic* content — two-digit winter MAE/RMSE, not
-  today's single-digit summer figures. A layout that fits only while the air is clean fails in
-  the season an hourly PM2.5 page is read.
+- a deploy is confirmed on **fetched HTML**, never on a reload, which can serve a cached page;
+- a phone width needs **CDP device emulation** — Chromium will not create a window under
+  ~500 px, so `--window-size=390` renders wide and *crops*, which looks exactly like overflow;
+- `table { width: 100% }` reports the card's width whether there is room to spare or none, so
+  a table is measured at **`width: min-content`**, against **winter** figures rather than
+  today's single-digit summer ones.
+
+All three are performed by `.claude/skills/verify-published-page/` — run the skill rather than
+rebuilding the procedure. The lead table declares `data-scroll="by-design"` because seven
+columns cannot fit a phone at a readable size; that is the only table allowed a negative
+margin, and the declaration lives in `horizon_section.py` rather than in the checker.
 
 ## Code graph
 

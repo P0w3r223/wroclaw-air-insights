@@ -35,8 +35,12 @@ forecasts.jsonl
 .vscode/
 *.iml
 
-# Local assistant session notes and settings — machine-local, not project history
-.claude/
+# Local assistant session notes and settings — machine-local, not project history. The skills
+# directory is the exception: it holds project tooling (the page measurement over CDP), which
+# belongs to the repository for the same reason `pipeline` does — a procedure that only exists
+# on one machine is a procedure that gets re-derived, and this one has been got wrong twice.
+.claude/*
+!.claude/skills/
 
 # OS
 .DS_Store
