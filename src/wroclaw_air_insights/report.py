@@ -221,12 +221,8 @@ def _backtest_section(metadata: dict) -> str:
   showing it hours it learned from.</p>"""
 
 
-
 def _station_name(station_id: int) -> str:
     return next((s.name for s in config.STATIONS if s.id == station_id), f"station {station_id}")
-
-
-
 
 
 def _stat_tile(value: str, what: str, why: str) -> str:
