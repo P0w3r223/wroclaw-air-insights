@@ -388,6 +388,41 @@ def test_every_lead_carries_the_same_two_readings():
         assert cut["mae_by_day"] == pytest.approx(6.0), lead
 
 
+def test_the_newest_day_votes_only_on_the_leads_it_has_been_graded_on():
+    """The same error one level down, and the newest day is always the one that triggers it.
+
+    An append-only log's most recent origin has had its short leads observed and is still
+    waiting on the long ones. Those are the easy leads — the lead axis is this project's own
+    evidence for that — so a plain mean of per-day means would let a partly graded day enter
+    every figure with a flattering number and a full vote.
+    """
+    complete = [
+        row
+        for day, predicted in (
+            (pd.Timestamp("2026-08-11 07:00"), 26.0),
+            (pd.Timestamp("2026-08-12 07:00"), 26.0),
+            (pd.Timestamp("2026-08-13 07:00"), 26.0),
+        )
+        for row in _dispatched(day, 1, predicted)
+    ]
+    # Issued today, graded so far on leads 1-2 only, and perfect on them.
+    partial = prospective.forecast_rows(
+        _forecast_from(pd.Timestamp("2026-08-14 07:00"), 20.0, leads=2),
+        _ISSUED,
+        _metadata(),
+    )
+    scored = prospective.score_log(complete + partial, _flat_observations(hours=120))
+    cut = prospective.prospective_summary(scored)["by_source"][config.FORECAST_SOURCE_MODEL]
+
+    assert cut["days"] == 4 and cut["leads"] == 4
+    # Leads 1-2 have four days voting, one of them perfect: (6+6+6+0)/4 = 4.5.
+    # Leads 3-4 have three, all missing by 6. The cut is the mean of the four lead figures.
+    assert cut["mae_by_day"] == pytest.approx((4.5 + 4.5 + 6.0 + 6.0) / 4)
+    # A plain mean of per-day means would have read 4.5 — a quarter under the truth, from a
+    # day that answered half the leads.
+    assert cut["mae_by_day"] > 4.5
+
+
 def test_the_summary_says_how_the_record_is_spread_over_the_days_that_made_it():
     origins = prospective.prospective_summary(
         prospective.score_log(_uneven_log(), _flat_observations())

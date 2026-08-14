@@ -1105,10 +1105,18 @@ cannot double-count), so this was never a bug in the log; it was a bug in readin
 though its days were equally weighted.
 
 **The unit of evidence is the origin day, and both averages are now published.** Every average
-in `prospective_summary` has a `*_by_day` twin that gives each origin day one vote, `days` sits
-beside every `n`, and an `origins` block reports the days, the issuances, the per-day row counts
-and the heaviest day's share. `score-log` prints that spread *before* anything averaged over it,
-and says so explicitly when a day was issued more than once.
+in `prospective_summary` has a `*_by_day` twin that gives each origin day one vote, `days` and
+`leads` sit beside every `n`, and an `origins` block reports the days, the issuances, the
+per-day row counts and the heaviest day's share. `score-log` prints that spread *before*
+anything averaged over it, and breaks it down by day when a day was issued more than once.
+
+*The day-weighted figure collapses the day axis inside each lead first, and a review caught
+that this is load bearing.* A plain mean of per-day means has the same defect one level down:
+the newest day in an append-only log is graded on its **short** leads while the long ones wait
+for their hour, and the lead axis is this project's own evidence that short leads are the easy
+ones. That day would then enter every figure with a flattering number and a full vote.
+Averaging within `(day, lead)` and collapsing days before leads confines a partly graded day to
+the leads it actually answered.
 
 *Why the day rather than the issuance.* Five origins an hour apart forecast mostly the same
 valid hours, and the 24 leads of a single run describe one weather situation. The day is the
@@ -1137,17 +1145,21 @@ meantime.
 2026-08-14, none of which is a result on its own, and all three of which are the kind of thing
 only a prospective log produces.
 
-- **The two averages disagree on the sign question, not on the level.** Graded against the
-  observations stored locally that day, the model's row-weighted bias reads +1.4 µg/m³ and its
-  day-weighted bias +0.05 — "the forecast runs high" against "the forecast is unbiased", from
-  the same rows. MAE moved much less (1.92 against 2.17). That is the expected shape rather
-  than a surprise: an error magnitude averages over days more gently than a signed quantity,
-  where one day's direction can be cancelled by another's. It is also why `bias_by_day` exists
-  at all instead of only `mae_by_day` — the cut where the weighting changes the *sentence* is
-  the one that had to be twinned.
-- Quoted as a local illustration and not as the project's figure: it was graded against a
-  database last ingested 2026-08-10, so only 52 of the 287 rows had an observation to meet. The
-  CI run grades against fresh data; this entry is about the reading, not the level.
+- **The two readings differ modestly, and the first version of this entry said they differed
+  dramatically.** Graded against the observations stored locally that day, the model comes out
+  at MAE 1.92 row-weighted against 1.85 by day, and bias +1.41 against +1.14.
+- **What that first version claimed, and why it was wrong, is the more useful record.** It read
+  "+1.4 against +0.05 — *the forecast runs high* against *the forecast is unbiased*, from the
+  same rows", and offered that as the cut where weighting changes the sentence. The +0.05 was
+  an artefact of the estimator, not a property of the log: a plain mean of per-day means gave
+  the newest, partly graded day — three short leads, scored nearly perfectly — the same vote as
+  a day that had contributed all 24. The correction was found in review, before either figure
+  reached the page, and it is the same defect as item 16 itself: an average taken over units
+  that are not comparable. A written-down number that survives one review round is not the same
+  as a measured one.
+- Quoted as a local illustration and not as the project's figure either way: it was graded
+  against a database last ingested 2026-08-10, so only 52 of the 287 rows had an observation to
+  meet. The CI run grades against fresh data; this entry is about the reading, not the level.
 
 **17. Prospective evidence is still too thin to publish, and it is worth naming how thin.**
 104 forecasts graded, of which the served-predictor split is model 82 (MAE 2.573), naive 20

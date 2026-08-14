@@ -533,9 +533,10 @@ def specialist_scan(
 def _print_origin_spread(origins: dict) -> None:
     """Say how the graded record is distributed before printing anything averaged over it.
 
-    Printed first, and unconditionally, because this is the caveat that has to arrive *before*
-    the figures rather than as a footnote under them: an aggregate over rows is an aggregate
-    over whichever day the workflow happened to be dispatched most often.
+    The day and issuance counts print first, on every record, because this is the caveat that
+    has to arrive *before* the figures rather than as a footnote under them: an aggregate over
+    rows is an aggregate over whichever day the workflow happened to be dispatched most often.
+    The per-day breakdown follows only when a day was in fact issued more than once.
     """
     if not origins.get("days"):
         return
@@ -543,14 +544,16 @@ def _print_origin_spread(origins: dict) -> None:
     print(f"[score-log] graded over {origins['days']} origin days "
           f"({origins['issuances']} issuances); heaviest day {heaviest['day']} carries "
           f"{heaviest['rows']} rows — {heaviest['share']:.0%} of the record")
-    if max(day["issuances"] for day in origins["rows_by_day"].values()) > 1:
-        # The condition is a re-dispatched day, not a share of rows. A day issued twice is
-        # weighted twice in every row-weighted figure however small the record is, while a day
-        # that merely lost an hour to a station gap is not being over-weighted at all — and a
-        # share threshold cannot tell those apart. Read `*_by_day`, which gives each day one
-        # vote regardless of how often the workflow ran.
-        print("[score-log] a day was issued more than once — "
-              "the row-weighted figures follow the dispatch count; read `*_by_day`")
+    # The condition is a re-dispatched day, not a share of rows. A day issued twice is weighted
+    # twice in every row-weighted figure however small the record is, while a day that merely
+    # lost an hour to a station gap is not being over-weighted at all — and a share threshold
+    # cannot tell those apart. Below it the summary line above says everything there is to say,
+    # and the per-day table would add four lines per day to a daily job reading an append-only
+    # record: a year of scrollback under a caveat that does not apply.
+    if max(day["issuances"] for day in origins["rows_by_day"].values()) <= 1:
+        return
+    print("[score-log] a day was issued more than once — "
+          "the row-weighted figures follow the dispatch count; read `*_by_day`")
     print(json.dumps(origins["rows_by_day"], indent=2))
 
 

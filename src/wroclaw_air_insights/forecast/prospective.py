@@ -34,8 +34,10 @@ Three design decisions carry it:
   2026-08-11 that put 120 of the record's 287 rows on one day. Twenty-four leads of one run
   describe one weather situation, and five runs of one day forecast mostly the same hours, so
   averaging over rows lets whichever day was dispatched most often decide the figure. Every
-  average here is therefore reported twice — over rows, and as the mean of the per-origin-day
-  means — with the day and issuance counts beside them.
+  average here is therefore reported twice — over rows, and day-weighted — with the day,
+  lead and issuance counts beside them. The day-weighted figure collapses the day axis
+  *within each lead* before averaging across leads, so the newest day, which is graded on its
+  short leads while the long ones wait for their hour, moves those leads and not the rest.
 
 Clocks follow the project's one-clock rule. ``valid_time`` and ``origin`` are naive local
 (``Europe/Warsaw``) in the same format the measurements table stores, so scoring joins without
@@ -219,17 +221,27 @@ def _origin_day(origins: pd.Series) -> pd.Series:
 
 
 def _day_mean(frame: pd.DataFrame, values: pd.Series) -> float | None:
-    """Mean over origin days of that day's mean of ``values``.
+    """Day-weighted within each lead, then averaged over the leads the slice covers.
 
     The day-weighted twin of every row-weighted average in the summary. A day the workflow was
     dispatched five times contributes once here and five times to the row-weighted figure; that
     is the whole difference between the two, and it is why both are reported.
+
+    **Averaged per lead first, and it has to be.** A plain mean of per-day means gives a day
+    that has only been *partly* graded a full vote — and the newest day in an append-only log
+    is always the partly graded one, holding its short leads while the long ones wait for their
+    hour. Those are the easy leads, which is this project's own lead-axis result, so the newest
+    day would enter every figure with a flattering number and full weight. Grouping by
+    ``(day, lead)`` and collapsing the day axis first confines a partial day to the leads it
+    actually answered: it moves those leads and cannot touch the rest.
     """
     usable = values.dropna()
     if not len(usable):
         return None
-    daily = usable.groupby(_origin_day(frame.loc[usable.index, "origin"])).mean()
-    return round(float(daily.mean()), 3)
+    rows = frame.loc[usable.index]
+    per_day_and_lead = usable.groupby([_origin_day(rows["origin"]), rows["lead"]]).mean()
+    per_lead = per_day_and_lead.groupby(level=1).mean()
+    return round(float(per_lead.mean()), 3)
 
 
 def _days(frame: pd.DataFrame) -> int:
@@ -237,10 +249,16 @@ def _days(frame: pd.DataFrame) -> int:
 
 
 def _cut(frame: pd.DataFrame) -> dict:
-    """Error over one slice of the log, both ways, with the counts that separate them."""
+    """Error over one slice of the log, both ways, with the counts that separate them.
+
+    ``leads`` is reported beside ``days`` because the day-weighted figure is an average over
+    them: a cut spanning one lead and a cut spanning twenty are not equally hard, and the two
+    counts together say which shape produced the number.
+    """
     return {
         "n": int(len(frame)),
         "days": _days(frame),
+        "leads": int(frame["lead"].nunique()) if len(frame) else 0,
         "mae": _mae(frame["error"]),
         "mae_by_day": _day_mean(frame, frame["error"].abs()),
         "bias": round(float(frame["error"].mean()), 3),
@@ -252,8 +270,10 @@ def _origin_counts(graded: pd.DataFrame) -> dict:
     """How the graded record is distributed over the days and issuances that produced it.
 
     Printed beside every figure rather than left to be worked out, because the log's own history
-    already contains a day carrying 42% of it. A reader who takes the aggregate at face value is
-    reading that day's weather, and nothing in a mean says so.
+    contains a day that was issued five times — 120 of the 287 rows the record held on
+    2026-08-14. A reader who takes an aggregate at face value is reading that day's weather, and
+    nothing in a mean says so. (The share falls with every ordinary day appended, which is why
+    it is dated here rather than asserted as a level.)
     """
     if not len(graded):
         return {"days": 0, "issuances": 0, "rows_by_day": {}, "heaviest_day": None}
@@ -332,7 +352,15 @@ def prospective_summary(scored: pd.DataFrame) -> dict:
     }
 
 
-_EMPTY_COVERAGE = {"n": 0, "days": 0, "covered": None, "covered_by_day": None, "by_source": {}}
+def _no_coverage() -> dict:
+    """The shape returned when no published band has met its hour yet.
+
+    A function rather than a module constant: a shared literal hands every caller the same
+    nested ``by_source`` object, and one mutation would then poison the empty case for the
+    life of the process.
+    """
+    return {"n": 0, "days": 0, "leads": 0, "covered": None, "covered_by_day": None,
+            "by_source": {}}
 
 
 def _coverage(frame: pd.DataFrame) -> dict:
@@ -346,6 +374,7 @@ def _coverage(frame: pd.DataFrame) -> dict:
     return {
         "n": int(len(frame)),
         "days": _days(frame),
+        "leads": int(frame["lead"].nunique()),
         "covered": round(float(covered.mean()), 3),
         "covered_by_day": _day_mean(frame, covered),
     }
@@ -354,10 +383,10 @@ def _coverage(frame: pd.DataFrame) -> dict:
 def _interval_coverage(graded: pd.DataFrame) -> dict:
     """Out-of-sample coverage of the published band, over the rows that carried one."""
     if not len(graded) or "covered" not in graded:
-        return dict(_EMPTY_COVERAGE)
+        return _no_coverage()
     with_band = graded.dropna(subset=["covered"])
     if not len(with_band):
-        return dict(_EMPTY_COVERAGE)
+        return _no_coverage()
     return {
         **_coverage(with_band),
         "by_source": {
