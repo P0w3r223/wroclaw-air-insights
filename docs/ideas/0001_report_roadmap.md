@@ -11,7 +11,7 @@ test; item 14 dropped; item 15 **complete** — the page made legible, and the f
 took, measured at a real phone viewport. Every numbered item is measured, shipped or dropped.
 What is open now comes from the running system rather than from this plan: see **Next**, where
 item 16 gates the rest.)
-Author: P0w3r223 + Claude
+Author: P0w3r223
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
 ---

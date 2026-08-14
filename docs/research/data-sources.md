@@ -4,7 +4,7 @@ Date: 2026-07-17
 Updated: 2026-08-11 — the air-quality index endpoint, added after two of its behaviours
 reached the published page as a defect
 Status: accepted
-Author: P0w3r223 + Claude
+Author: P0w3r223
 Related to: portfolio plan (project A1), forecast module
 
 ---
