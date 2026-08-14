@@ -240,6 +240,10 @@ def render(metadata: dict) -> str:
     naive_elsewhere = baseline.LABELS["persistence"]
     flat = _flatness_caveat(scored, shown)
 
+    # `data-scroll="by-design"` marks the one table on this page that is *meant* to scroll on a
+    # phone: seven columns do not fit 336 px at a readable size, and the alternatives are
+    # dropping a column or type below 12 px. It changes nothing a reader sees; it is there so a
+    # width check can tell this table apart from one that scrolled because it regressed.
     return f"""  <h2>How far ahead, and what that costs</h2>
   <img src="data:image/png;base64,{chart}" alt="Forecast error against lead time">
   <p>The main model is trained on one task — predict 24 hours ahead — and the lead time is
@@ -248,7 +252,7 @@ def render(metadata: dict) -> str:
   one hour out and weak a day out, and a predictor fitted for a single lead works from a
   fresher reading the closer that lead is. The error this page headlines describes the
   24-hour task; the chart is why one figure could not describe the rest.</p>
-  <table class="metrics">
+  <table class="metrics" data-scroll="by-design">
     <thead>
       <tr><th>Lead</th><th>Model MAE ↓</th><th>Specialist MAE ↓</th><th>Naive MAE ↓</th>
           <th>Paired Δ</th><th>Folds won</th><th>Served by</th></tr>
