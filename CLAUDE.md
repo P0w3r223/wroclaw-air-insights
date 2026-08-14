@@ -23,8 +23,10 @@ src/wroclaw_air_insights/
     intervals.py       # prediction bands, and the coverage check that gates each one
     prospective.py     # the forecast log: what was published, graded once the hours arrive
     serving.py         # live next-24h forecast from the saved bundle
+  accuracy_section.py  # the headline error, its two references, and how close selection was
   charts.py            # matplotlib figures as base64
   formatting.py        # the n/a gate every published number passes
+  glossary_section.py  # what MAE/RMSE/R² mean, read against this run's own figures
   horizon_section.py   # the lead-axis section of the report
   interval_section.py  # the interval section: what the band claims, and whether it held
   regime_section.py    # the clean/elevated split at the WHO reference level
