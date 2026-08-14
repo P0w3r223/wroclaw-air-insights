@@ -530,6 +530,33 @@ def specialist_scan(
     return result
 
 
+def _print_origin_spread(origins: dict) -> None:
+    """Say how the graded record is distributed before printing anything averaged over it.
+
+    The day and issuance counts print first, on every record, because this is the caveat that
+    has to arrive *before* the figures rather than as a footnote under them: an aggregate over
+    rows is an aggregate over whichever day the workflow happened to be dispatched most often.
+    The per-day breakdown follows only when a day was in fact issued more than once.
+    """
+    if not origins.get("days"):
+        return
+    heaviest = origins["heaviest_day"]
+    print(f"[score-log] graded over {origins['days']} origin days "
+          f"({origins['issuances']} issuances); heaviest day {heaviest['day']} carries "
+          f"{heaviest['rows']} rows — {heaviest['share']:.0%} of the record")
+    # The condition is a re-dispatched day, not a share of rows. A day issued twice is weighted
+    # twice in every row-weighted figure however small the record is, while a day that merely
+    # lost an hour to a station gap is not being over-weighted at all — and a share threshold
+    # cannot tell those apart. Below it the summary line above says everything there is to say,
+    # and the per-day table would add four lines per day to a daily job reading an append-only
+    # record: a year of scrollback under a caveat that does not apply.
+    if max(day["issuances"] for day in origins["rows_by_day"].values()) <= 1:
+        return
+    print("[score-log] a day was issued more than once — "
+          "the row-weighted figures follow the dispatch count; read `*_by_day`")
+    print(json.dumps(origins["rows_by_day"], indent=2))
+
+
 def score_log(log_path: Path, station_id: int = config.PRIMARY_STATION_ID) -> dict:
     """Grade the published forecast log against the observations that have since arrived.
 
@@ -546,9 +573,7 @@ def score_log(log_path: Path, station_id: int = config.PRIMARY_STATION_ID) -> di
     rows = prospective.read_log(log_path)
     if not rows:
         print(f"[score-log] {log_path} holds no forecasts yet — nothing to grade")
-        return {"scored_rows": 0, "pending_rows": 0, "period": None,
-                "by_lead": {}, "by_source": {},
-                "interval": {"n": 0, "covered": None, "by_source": {}}}
+        return prospective.prospective_summary(prospective.score_log([], pd.DataFrame()))
 
     conn = db.connect()
     try:
@@ -561,6 +586,7 @@ def score_log(log_path: Path, station_id: int = config.PRIMARY_STATION_ID) -> di
     print(f"[score-log] {len(rows)} logged forecasts, {summary['scored_rows']} graded, "
           f"{summary['pending_rows']} awaiting their hour"
           + (f" — {period['from']} to {period['to']}" if period else ""))
+    _print_origin_spread(summary["origins"])
     if summary["by_source"]:
         # The prospective test of the serving policy: the folds decided where the naive rule
         # stops earning its hours, and these are hours nobody had seen when they decided.
@@ -575,7 +601,8 @@ def score_log(log_path: Path, station_id: int = config.PRIMARY_STATION_ID) -> di
         # only place that claim meets them.
         print(f"[score-log] published interval: {coverage['covered']} of "
               f"{coverage['n']} banded hours covered, against a nominal "
-              f"{intervals.NOMINAL_COVERAGE}")
+              f"{intervals.NOMINAL_COVERAGE} "
+              f"({coverage['covered_by_day']} by origin day, over {coverage['days']})")
         print(json.dumps(coverage["by_source"], indent=2))
     return summary
 
