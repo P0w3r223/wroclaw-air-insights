@@ -21,12 +21,16 @@ here, which is why the measurement is a script instead of a procedure to re-deri
 
 ```bash
 .venv/Scripts/python .claude/skills/verify-published-page/measure_page.py \
-  https://p0w3r223.github.io/wroclaw-air-insights/ --winter
+  https://p0w3r223.github.io/wroclaw-air-insights/ --winter --expect "2026-08-14 08:29"
 ```
 
+`--expect` is what turns the stamp into a gate: pass the build you are waiting for (its
+`Generated` time, or any string the change added). Without it the check only confirms that
+*some* build is there, which every deploy since the first would pass.
+
 Point it at a path instead of a URL to check a page before it ships. `--widths 390,768` sets
-the viewports (390 px is the phone case that matters); `--marker` overrides the build stamp it
-looks for; `--browser` names a different Chromium.
+the viewports (390 px is the phone case that matters); `--browser` names a different Chromium.
+`websocket-client` comes from the `tools` extra: `pip install -e ".[tools]"`.
 
 Reach for `--winter` on any layout claim. Summer errors are single-digit and a table that fits
 only while the air is clean fails in the season an hourly PM2.5 page is read, so the flag
@@ -36,16 +40,16 @@ regression once.
 ## Reading the output
 
 ```
-marker: Generated 2026-08-14 08:29 CEST ·
+marker: Generated 2026-08-14 08:29 CEST ·   (matches --expect '2026-08-14 08:29')
 390 px (winter figures): document no horizontal overflow
   table 0 .metrics            needs  332 / room  336 (+4 px, fits)
   table 1 .metrics            needs  362 / room  336 (-26 px, scrolls, by design)
 ```
 
 - **marker** comes from the HTML fetched over the wire, never from a rendered reload — a
-  browser can serve a cached page that agrees with what you hoped. Compare the stamp against
-  the run you expect: an older one means `refresh.yml` has not rebuilt the page yet, which is a
-  separate job from the merge.
+  browser can serve a cached page that agrees with what you hoped. A stamp older than the build
+  you expect means `refresh.yml` has not rebuilt the page yet, which is a job separate from the
+  merge; a merged change is not a published one until this line says so.
 - **needs / room** is the table's floor against the space inside its card. A negative margin is
   a table that scrolls sideways on that viewport.
 - **scrolls, by design** is the lead table declaring itself with `data-scroll="by-design"` in
@@ -61,5 +65,5 @@ Whether the page *reads* well — hierarchy, whether a figure's legend covers it
 section earns its space. That is a judgement made by looking, and a screenshot is the right
 instrument for it. This script answers the two questions that have been got wrong by looking.
 
-A page claim is settled when the fetched marker names the build you expect, and every table
-that has not declared itself carries a non-negative margin at 390 px with `--winter`.
+A page claim is settled when the fetched stamp matches the `--expect` you passed, and every
+table that has not declared itself carries a non-negative margin at 390 px with `--winter`.
