@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from wroclaw_air_insights import config
+from wroclaw_air_insights import config, pipeline
 from wroclaw_air_insights.forecast import prospective
 
 # stdlib timedelta, not pd.Timedelta(hours=...): the keyword form is deprecated under
@@ -303,3 +303,149 @@ def test_a_log_with_no_bands_at_all_reports_nothing_rather_than_zero_coverage():
     )
     assert summary["interval"]["n"] == 0
     assert summary["interval"]["covered"] is None
+
+
+# --- the unit of evidence is an origin day, not a logged row ------------------
+# The `(station, origin, lead)` key stops a re-run of the *same* origin from entering twice,
+# and that is all it can do. A workflow dispatched by hand five times in an afternoon issues
+# five different origins, each logging a fresh set of rows — which is what the real log did on
+# 2026-08-11, putting 120 of its 287 rows on one day. These pin the reading of that.
+_HEAVY_DAY = pd.Timestamp("2026-08-11 07:00")
+_QUIET_DAY = pd.Timestamp("2026-08-12 08:00")
+
+
+def _forecast_from(origin, predicted, band=None, leads=4):
+    frame = pd.DataFrame(
+        {
+            "timestamp": [origin + timedelta(hours=lead) for lead in range(1, leads + 1)],
+            "lead": list(range(1, leads + 1)),
+            "predicted_pm25": [float(predicted)] * leads,
+            "source": [config.FORECAST_SOURCE_MODEL] * leads,
+        }
+    )
+    if band is not None:
+        frame["lower_pm25"], frame["upper_pm25"] = band
+    return frame
+
+
+def _dispatched(first_origin, issuances, predicted, band=None):
+    """One origin day, issued ``issuances`` times, an hour apart — a hand-dispatched day."""
+    rows = []
+    for offset in range(issuances):
+        rows = prospective.merge_rows(
+            rows,
+            prospective.forecast_rows(
+                _forecast_from(first_origin + timedelta(hours=offset), predicted, band),
+                _ISSUED,
+                _metadata(),
+            ),
+        )
+    return rows
+
+
+def _flat_observations(value=20.0, hours=48):
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-08-11 00:00", periods=hours, freq="h"),
+            "value": [float(value)] * hours,
+        }
+    )
+
+
+def _uneven_log(band_heavy=None, band_quiet=None):
+    """Five issuances on one day missing by 10, one on the next missing by 2."""
+    return _dispatched(_HEAVY_DAY, 5, 30.0, band_heavy) + _dispatched(
+        _QUIET_DAY, 1, 22.0, band_quiet
+    )
+
+
+def test_a_day_dispatched_five_times_does_not_get_five_votes():
+    summary = prospective.prospective_summary(
+        prospective.score_log(_uneven_log(), _flat_observations())
+    )
+    cut = summary["by_source"][config.FORECAST_SOURCE_MODEL]
+
+    assert cut["n"] == 24 and cut["days"] == 2
+    # Row-weighted, the heavily dispatched day supplies 20 of 24 rows and all but drowns out
+    # the other: (20 x 10 + 4 x 2) / 24.
+    assert cut["mae"] == pytest.approx(8.667, abs=0.001)
+    # One vote per origin day puts it halfway between the two days, which is what a reader
+    # taking "the log says the error is X" away from this command should get.
+    assert cut["mae_by_day"] == pytest.approx(6.0)
+    assert cut["bias_by_day"] == pytest.approx(6.0)  # both days run high; sign is preserved
+
+
+def test_every_lead_carries_the_same_two_readings():
+    # Per-lead is where the imbalance hides best: each lead looks like a clean series of one
+    # row per day until the counts are printed beside it.
+    summary = prospective.prospective_summary(
+        prospective.score_log(_uneven_log(), _flat_observations())
+    )
+    assert set(summary["by_lead"]) == {1, 2, 3, 4}
+    for lead, cut in summary["by_lead"].items():
+        assert cut["days"] == 2, lead
+        assert cut["mae"] == pytest.approx(8.667, abs=0.001), lead
+        assert cut["mae_by_day"] == pytest.approx(6.0), lead
+
+
+def test_the_summary_says_how_the_record_is_spread_over_the_days_that_made_it():
+    origins = prospective.prospective_summary(
+        prospective.score_log(_uneven_log(), _flat_observations())
+    )["origins"]
+
+    assert origins["days"] == 2
+    assert origins["issuances"] == 6
+    assert origins["rows_by_day"]["2026-08-11"] == {"rows": 20, "issuances": 5}
+    assert origins["rows_by_day"]["2026-08-12"] == {"rows": 4, "issuances": 1}
+    assert origins["heaviest_day"]["day"] == "2026-08-11"
+    assert origins["heaviest_day"]["share"] == pytest.approx(0.833, abs=0.001)
+
+
+def test_coverage_is_read_the_same_way_because_a_band_makes_a_promise():
+    # Uneven weighting bites harder on coverage than on MAE: a rate is a stated promise, and
+    # here the promise would be graded almost entirely on one day's air.
+    summary = prospective.prospective_summary(
+        prospective.score_log(
+            _uneven_log(band_heavy=(25.0, 35.0), band_quiet=(18.0, 24.0)),
+            _flat_observations(),
+        )
+    )
+    coverage = summary["interval"]
+
+    assert coverage["n"] == 24 and coverage["days"] == 2
+    assert coverage["covered"] == pytest.approx(0.167, abs=0.001)   # 4 of 24 rows
+    assert coverage["covered_by_day"] == pytest.approx(0.5)          # 1 of 2 days
+    assert coverage["by_source"][config.FORECAST_SOURCE_MODEL]["days"] == 2
+
+
+def test_an_ungraded_log_still_reports_the_origin_block_rather_than_omitting_it():
+    # Shape pin: the caller prints this before anything averaged, so it may not be absent.
+    summary = prospective.prospective_summary(prospective.score_log([], _flat_observations()))
+    assert summary["origins"] == {
+        "days": 0, "issuances": 0, "rows_by_day": {}, "heaviest_day": None
+    }
+
+
+def test_score_log_prints_the_spread_before_the_figures(capsys):
+    summary = prospective.prospective_summary(
+        prospective.score_log(_uneven_log(), _flat_observations())
+    )
+    pipeline._print_origin_spread(summary["origins"])
+    printed = capsys.readouterr().out
+
+    assert "2 origin days" in printed and "6 issuances" in printed
+    assert "83%" in printed
+    assert "issued more than once" in printed and "read `*_by_day`" in printed
+
+
+def test_an_evenly_dispatched_log_is_not_warned_about(capsys):
+    # A hint that fires on every record is a hint nobody reads.
+    even = _dispatched(_HEAVY_DAY, 1, 30.0) + _dispatched(_QUIET_DAY, 1, 22.0)
+    summary = prospective.prospective_summary(
+        prospective.score_log(even, _flat_observations())
+    )
+    pipeline._print_origin_spread(summary["origins"])
+    printed = capsys.readouterr().out
+
+    assert "2 origin days" in printed
+    assert "read `*_by_day`" not in printed

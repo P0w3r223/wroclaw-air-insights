@@ -28,6 +28,14 @@ Three design decisions carry it:
   window slides, so a rise could mean a harder month rather than a worse model. What this
   reports is per-lead error over a named period, and the per-source split that says whether the
   serving policy is placed where the folds said it should be.
+* **The unit of evidence is the origin day, not the logged row.** The key above stops a re-run
+  of the *same* origin from entering twice, and that is all it can do: a workflow dispatched
+  five times in an afternoon issues five *different* origins, each logging a fresh 24 rows. On
+  2026-08-11 that put 120 of the record's 287 rows on one day. Twenty-four leads of one run
+  describe one weather situation, and five runs of one day forecast mostly the same hours, so
+  averaging over rows lets whichever day was dispatched most often decide the figure. Every
+  average here is therefore reported twice — over rows, and as the mean of the per-origin-day
+  means — with the day and issuance counts beside them.
 
 Clocks follow the project's one-clock rule. ``valid_time`` and ``origin`` are naive local
 (``Europe/Warsaw``) in the same format the measurements table stores, so scoring joins without
@@ -205,6 +213,72 @@ def _mae(errors: pd.Series) -> float | None:
     return round(float(usable.abs().mean()), 3) if len(usable) else None
 
 
+def _origin_day(origins: pd.Series) -> pd.Series:
+    """The calendar day of the origin — the unit this log's evidence actually arrives in."""
+    return pd.to_datetime(origins).dt.strftime("%Y-%m-%d")
+
+
+def _day_mean(frame: pd.DataFrame, values: pd.Series) -> float | None:
+    """Mean over origin days of that day's mean of ``values``.
+
+    The day-weighted twin of every row-weighted average in the summary. A day the workflow was
+    dispatched five times contributes once here and five times to the row-weighted figure; that
+    is the whole difference between the two, and it is why both are reported.
+    """
+    usable = values.dropna()
+    if not len(usable):
+        return None
+    daily = usable.groupby(_origin_day(frame.loc[usable.index, "origin"])).mean()
+    return round(float(daily.mean()), 3)
+
+
+def _days(frame: pd.DataFrame) -> int:
+    return int(_origin_day(frame["origin"]).nunique()) if len(frame) else 0
+
+
+def _cut(frame: pd.DataFrame) -> dict:
+    """Error over one slice of the log, both ways, with the counts that separate them."""
+    return {
+        "n": int(len(frame)),
+        "days": _days(frame),
+        "mae": _mae(frame["error"]),
+        "mae_by_day": _day_mean(frame, frame["error"].abs()),
+        "bias": round(float(frame["error"].mean()), 3),
+        "bias_by_day": _day_mean(frame, frame["error"]),
+    }
+
+
+def _origin_counts(graded: pd.DataFrame) -> dict:
+    """How the graded record is distributed over the days and issuances that produced it.
+
+    Printed beside every figure rather than left to be worked out, because the log's own history
+    already contains a day carrying 42% of it. A reader who takes the aggregate at face value is
+    reading that day's weather, and nothing in a mean says so.
+    """
+    if not len(graded):
+        return {"days": 0, "issuances": 0, "rows_by_day": {}, "heaviest_day": None}
+
+    days = _origin_day(graded["origin"])
+    rows_by_day = {
+        str(day): {
+            "rows": int(len(group)),
+            "issuances": int(group["origin"].nunique()),
+        }
+        for day, group in graded.groupby(days)
+    }
+    heaviest = max(rows_by_day.items(), key=lambda item: item[1]["rows"])
+    return {
+        "days": int(days.nunique()),
+        "issuances": int(graded["origin"].nunique()),
+        "rows_by_day": rows_by_day,
+        "heaviest_day": {
+            "day": heaviest[0],
+            "rows": heaviest[1]["rows"],
+            "share": round(heaviest[1]["rows"] / len(graded), 3),
+        },
+    }
+
+
 def prospective_summary(scored: pd.DataFrame) -> dict:
     """Per-lead and per-source prospective error over whatever the log has been graded on.
 
@@ -213,6 +287,10 @@ def prospective_summary(scored: pd.DataFrame) -> dict:
     the log can answer that cross-validation cannot is whether forecasts issued *before* the
     outcome existed hold up, and whether the serving policy hands the early leads to the right
     predictor, so those are the two cuts.
+
+    Both cuts carry two averages. ``mae`` weights every graded row equally; ``mae_by_day`` gives
+    every origin day one vote, and ``days`` says how many voted. They separate exactly when the
+    workflow was dispatched unevenly, which has already happened — see ``origins``.
     """
     graded = scored.dropna(subset=["error"]) if len(scored) else scored
     pending = int(len(scored) - len(graded))
@@ -221,6 +299,7 @@ def prospective_summary(scored: pd.DataFrame) -> dict:
             "scored_rows": 0,
             "pending_rows": pending,
             "period": None,
+            "origins": _origin_counts(graded),
             "by_lead": {},
             "by_source": {},
             "interval": _interval_coverage(graded),
@@ -236,17 +315,15 @@ def prospective_summary(scored: pd.DataFrame) -> dict:
             "from": stamps.min().strftime(TS_FORMAT),
             "to": stamps.max().strftime(TS_FORMAT),
         },
-        "by_lead": {
-            int(lead): {"n": int(len(group)), "mae": _mae(group["error"]),
-                        "bias": round(float(group["error"].mean()), 3)}
-            for lead, group in graded.groupby("lead")
-        },
+        # What the period does not say: how the record is spread inside it. A period of a week
+        # made of one heavily re-dispatched day and six ordinary ones is not a week of evidence.
+        "origins": _origin_counts(graded),
+        "by_lead": {int(lead): _cut(group) for lead, group in graded.groupby("lead")},
         # The prospective test of the crossover. The folds decided where the naive rule stops
         # earning its hours; this says whether that decision survives contact with hours nobody
         # had seen when it was made.
         "by_source": {
-            str(source): {"n": int(len(group)), "mae": _mae(group["error"])}
-            for source, group in graded.groupby("source")
+            str(source): _cut(group) for source, group in graded.groupby("source")
         },
         # The one figure here that tests a *stated promise* rather than reporting a level. An
         # 80% band is a claim about hours that had not happened when it was drawn, and this is
@@ -255,21 +332,35 @@ def prospective_summary(scored: pd.DataFrame) -> dict:
     }
 
 
+_EMPTY_COVERAGE = {"n": 0, "days": 0, "covered": None, "covered_by_day": None, "by_source": {}}
+
+
+def _coverage(frame: pd.DataFrame) -> dict:
+    """Covered fraction over one slice, row-weighted and day-weighted.
+
+    A coverage rate is a *promise* rather than a level, so uneven weighting bites harder here
+    than on MAE: an 80% band that was drawn on four leads of one heavily re-dispatched day is
+    being graded almost entirely on that day's air.
+    """
+    covered = frame["covered"].astype(float)
+    return {
+        "n": int(len(frame)),
+        "days": _days(frame),
+        "covered": round(float(covered.mean()), 3),
+        "covered_by_day": _day_mean(frame, covered),
+    }
+
+
 def _interval_coverage(graded: pd.DataFrame) -> dict:
     """Out-of-sample coverage of the published band, over the rows that carried one."""
     if not len(graded) or "covered" not in graded:
-        return {"n": 0, "covered": None, "by_source": {}}
+        return dict(_EMPTY_COVERAGE)
     with_band = graded.dropna(subset=["covered"])
     if not len(with_band):
-        return {"n": 0, "covered": None, "by_source": {}}
+        return dict(_EMPTY_COVERAGE)
     return {
-        "n": int(len(with_band)),
-        "covered": round(float(with_band["covered"].astype(float).mean()), 3),
+        **_coverage(with_band),
         "by_source": {
-            str(source): {
-                "n": int(len(group)),
-                "covered": round(float(group["covered"].astype(float).mean()), 3),
-            }
-            for source, group in with_band.groupby("source")
+            str(source): _coverage(group) for source, group in with_band.groupby("source")
         },
     }

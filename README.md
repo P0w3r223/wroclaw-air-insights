@@ -362,6 +362,13 @@ history. `pipeline score-log` grades it against the observations *currently* sto
 GIOŚ revision moves a past grade rather than freezing it at first sight; any figure quoted
 from that command is a figure as of the day it was run.
 
+It reports every average twice. The workflow can be dispatched by hand, and each dispatch logs
+a fresh origin, so a day the job ran five times supplies five times the rows of an ordinary
+day — which weights that day's weather five times over in anything averaged across rows. The
+`*_by_day` figures give each origin day one vote instead, and the command prints the day and
+issuance counts before any of them. Neither is the right answer on its own; the gap between
+them is how uneven the record is.
+
 ## License
 
 MIT. Air-quality data © GIOŚ; weather data © Open-Meteo / CAMS (CC BY 4.0).

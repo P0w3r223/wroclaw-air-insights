@@ -1,7 +1,7 @@
 # Report roadmap — making the Pages report speak to a non-technical reader
 
 Date: 2026-08-06
-Updated: 2026-08-11
+Updated: 2026-08-14
 Status: draft — sixth revision (item 5 **complete**: phase 1 measured, gated and served on a
 re-measured band, whose gate then failed on fresher data — the null ships and the machinery
 stands; item 6 **complete**: three interval constructions measured, one publishable, bundle
@@ -10,7 +10,8 @@ both published nulls re-measured under the paired rule that replaced the retract
 test; item 14 dropped; item 15 **complete** — the page made legible, and the four defects that
 took, measured at a real phone viewport. Every numbered item is measured, shipped or dropped.
 What is open now comes from the running system rather than from this plan: see **Next**, where
-item 16 gates the rest.)
+item 16 — the gate on the rest — is settled as of 2026-08-14, and the log has since answered
+part of items 18 and 19 by itself.)
 Author: P0w3r223
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
@@ -1090,21 +1091,63 @@ already drifted.*
     does not instrument for it.** One automatic PM2.5 sensor is what Wrocław has, and it is
     what the project is built on.
 
-## Next — the state as of 2026-08-11, and what it points at
+## Next — the state as of 2026-08-14, and what it points at
 
 Every numbered item is measured, shipped or dropped. What follows is not a backlog of
 features; it is what the running system has started saying and has not been answered yet.
 
-**16. The log now over-weights days the workflow was run by hand.** `score-log` reports 215
-logged forecasts across four origin days, and the split is 24 / 23 / 48 / 120. The last figure
-is today: `refresh.yml` was dispatched five times while shipping items 15's PRs, each run
-logging a fresh origin, so **56% of the record is one day** — and the aggregate is taken over
-rows. The key `(station, origin, lead)` is doing exactly its job (a re-run of the *same* origin
-cannot double-count), so this is not a bug in the log; it is a bug in reading the log as though
-its days were equally weighted. Decide between reporting per-day means of per-lead error, or
-stating the run count beside the figure. Until then no prospective figure should be quoted
-without the origin-day counts beside it. **This is the first item to settle, because every
-other prospective claim below is read off the same aggregate.**
+**16. The log over-weighted days the workflow was run by hand — settled 2026-08-14.** `score-log`
+reported 215 logged forecasts across four origin days, split 24 / 23 / 48 / 120. That last figure
+was one day: `refresh.yml` was dispatched five times while shipping item 15's PRs, each run
+logging a fresh origin, so **56% of the record was one day** — and the aggregate was taken over
+rows. The key `(station, origin, lead)` was doing exactly its job (a re-run of the *same* origin
+cannot double-count), so this was never a bug in the log; it was a bug in reading the log as
+though its days were equally weighted.
+
+**The unit of evidence is the origin day, and both averages are now published.** Every average
+in `prospective_summary` has a `*_by_day` twin that gives each origin day one vote, `days` sits
+beside every `n`, and an `origins` block reports the days, the issuances, the per-day row counts
+and the heaviest day's share. `score-log` prints that spread *before* anything averaged over it,
+and says so explicitly when a day was issued more than once.
+
+*Why the day rather than the issuance.* Five origins an hour apart forecast mostly the same
+valid hours, and the 24 leads of a single run describe one weather situation. The day is the
+conservative unit; the issuance count is printed beside it so a reader can see how far the two
+diverge instead of having to trust the choice.
+
+*Why the warning keys on a re-dispatched day rather than on a share of rows,* which is what the
+first version of it did. A share threshold cannot separate "issued five times" from "lost an
+hour to a station gap", and — measured on the very record it was written for — no share
+threshold defined relative to an even share can fire at all when there are only two days, since
+one day's share cannot reach twice of one half. The condition that actually creates the problem
+is an extra origin, so that is the condition tested.
+
+*What it does not do.* Nothing the page publishes is re-weighted, because the page publishes no
+prospective figure yet (item 17). This changes what `score-log` reports and how it may be
+quoted, which is exactly the scope the item asked for.
+
+*Dated record of the log, as of 2026-08-14:* **287 rows, 12 issuances, 7 origin days**
+(24 / 23 / 48 / 120 / 24 / 24 / 24). The heavy day is still there and always will be — an
+append-only record does not get re-balanced — which is the reason the reading had to change
+rather than the data. Its share has fallen from 56% to **42%** simply by three ordinary days
+being added, and it will keep falling; `*_by_day` is what makes the figures readable in the
+meantime.
+
+**16a. What the log said once it could be read by day** — three observations from the record on
+2026-08-14, none of which is a result on its own, and all three of which are the kind of thing
+only a prospective log produces.
+
+- **The two averages disagree on the sign question, not on the level.** Graded against the
+  observations stored locally that day, the model's row-weighted bias reads +1.4 µg/m³ and its
+  day-weighted bias +0.05 — "the forecast runs high" against "the forecast is unbiased", from
+  the same rows. MAE moved much less (1.92 against 2.17). That is the expected shape rather
+  than a surprise: an error magnitude averages over days more gently than a signed quantity,
+  where one day's direction can be cancelled by another's. It is also why `bias_by_day` exists
+  at all instead of only `mae_by_day` — the cut where the weighting changes the *sentence* is
+  the one that had to be twinned.
+- Quoted as a local illustration and not as the project's figure: it was graded against a
+  database last ingested 2026-08-10, so only 52 of the 287 rows had an observation to meet. The
+  CI run grades against fresh data; this entry is about the reading, not the level.
 
 **17. Prospective evidence is still too thin to publish, and it is worth naming how thin.**
 104 forecasts graded, of which the served-predictor split is model 82 (MAE 2.573), naive 20
@@ -1120,10 +1163,28 @@ the retrospective one — the single most informative thing this project could s
 uncertainty claim, and the one figure a coverage gate cannot fake, because the hours were not
 in hand when the band was drawn.
 
-**19. Whether the specialist gate ever clears again.** It cleared on 16 of 24 leads three weeks
-before item 5 shipped and on 7 of 24 on fresh data the day it did. Each daily run re-measures
-it (~80 s of `train`). Worth checking on a later window whether that was seasonal, and saying so
-either way; the null is already published, so a clearance would be the news, not the failure.
+*The material now exists and is worth sizing before it is quoted.* As of 2026-08-14 the log
+holds **31 banded rows, all at leads 1–4, across 9 issuances on 5 days** — and five of those
+nine issuances are 2026-08-11. So the first prospective coverage figure this project can produce
+is one where the row-weighted and day-weighted rates will differ, which is item 16's whole point
+arriving on the one claim that is a stated promise rather than a level. When it is quoted, it is
+`covered_by_day` that goes beside the 0.762, with the day count attached.
+
+**19. Whether the specialist gate ever clears again — it has, once in twelve runs.** It cleared
+on 16 of 24 leads three weeks before item 5 shipped and on 7 of 24 on fresh data the day it did.
+Each daily run re-measures it (~80 s of `train`).
+
+The log answers this without any extra measurement, because a served specialist writes its own
+`source`. Across the **12 issuances logged to 2026-08-14, exactly one served a specialist band**:
+origin `2026-08-11 07:00`, leads **+6 h → +17 h** (12 leads). Every other issuance — including
+each of 08-12, 08-13 and 08-14 — served only the naive prefix and the 24-hour model.
+
+**That is the published null holding, not a clearance to report.** One run in twelve is what
+"somewhere around the bar rather than clearly above it" looks like when it is run daily instead
+of re-measured twice, and the band it served is one lead wider than the +5 h → +17 h the phase 1
+window produced — consistent with the boundary being re-measured rather than remembered. What
+would change the entry is a *run* of consecutive clearances, or a season of them; a single
+issuance is the same evidence the two windows already gave, now visible in production.
 
 ~~**Housekeeping.** Nine merged branches survive locally and on origin.~~ **Done 2026-08-11** —
 all nine deleted from both after checking each against `git branch --merged origin/main`. Only
