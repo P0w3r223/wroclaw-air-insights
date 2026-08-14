@@ -21,7 +21,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from wroclaw_air_insights import charts, config, regime_section, report
+from wroclaw_air_insights import (
+    accuracy_section, charts, config, formatting, glossary_section, regime_section, report,
+)
 from wroclaw_air_insights.forecast import baseline, features, model
 
 _NAN = float("nan")
@@ -109,7 +111,7 @@ _NAN_METADATA = {
     ids=["float", "zero", "negative", "int", "numpy_float"],
 )
 def test_fmt_renders_numbers_with_two_decimals(value, expected):
-    assert report._fmt(value) == expected
+    assert formatting.fmt(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -118,11 +120,11 @@ def test_fmt_renders_numbers_with_two_decimals(value, expected):
     ids=["nan", "missing", "string", "bool", "list"],
 )
 def test_fmt_degrades_to_na_instead_of_rendering_nan(value):
-    assert report._fmt(value) == "n/a"
+    assert formatting.fmt(value) == "n/a"
 
 
 def test_fmt_honours_the_requested_precision():
-    assert report._fmt(0.123456, digits=1) == "0.1"
+    assert formatting.fmt(0.123456, digits=1) == "0.1"
 
 
 @pytest.mark.parametrize(
@@ -145,7 +147,7 @@ def test_number_rejects_unusable_metrics(value):
 
 # --- _row ---------------------------------------------------------------------
 def test_row_renders_label_and_all_three_metrics():
-    html = report._row("Random forest", _metrics(mae=1.0, rmse=2.0, r2=0.3))
+    html = accuracy_section._row("Random forest", _metrics(mae=1.0, rmse=2.0, r2=0.3))
     assert "<td>Random forest</td>" in html
     assert "<td>1.00</td>" in html
     assert "<td>2.00</td>" in html
@@ -154,24 +156,24 @@ def test_row_renders_label_and_all_three_metrics():
 
 @pytest.mark.parametrize("metrics", [{}, None], ids=["empty", "missing"])
 def test_row_is_omitted_entirely_when_metrics_were_never_recorded(metrics):
-    assert report._row("Naive rule", metrics) == ""
+    assert accuracy_section._row("Naive rule", metrics) == ""
 
 
 def test_row_shows_na_for_a_metric_the_bundle_lacks():
-    html = report._row("Naive rule", {"mae": 5.0})
+    html = accuracy_section._row("Naive rule", {"mae": 5.0})
     assert "<td>5.00</td>" in html
     assert html.count("<td>n/a</td>") == 3  # rmse, r2 and bias
     assert "nan" not in html
 
 
 def test_row_applies_the_css_class_only_when_given_one():
-    assert '<tr class="deployed">' in report._row("Model", _metrics(), "deployed")
-    assert "<tr>" in report._row("Model", _metrics())
+    assert '<tr class="deployed">' in accuracy_section._row("Model", _metrics(), "deployed")
+    assert "<tr>" in accuracy_section._row("Model", _metrics())
 
 
 # --- _metrics_table -----------------------------------------------------------
 def test_metrics_table_scores_the_model_against_both_references():
-    html = report._metrics_table(_fresh_metadata())
+    html = accuracy_section._metrics_table(_fresh_metadata())
     assert "HistGradientBoosting (this project)" in html
     assert baseline.LABELS["persistence"] in html
     assert baseline.LABELS["climatology"] in html
@@ -179,7 +181,7 @@ def test_metrics_table_scores_the_model_against_both_references():
 
 
 def test_metrics_table_names_the_window_that_was_scored():
-    html = report._metrics_table(_fresh_metadata())
+    html = accuracy_section._metrics_table(_fresh_metadata())
     assert "— 2026-06-01 to 2026-06-30" in html
 
 
@@ -187,7 +189,7 @@ def test_metrics_table_names_the_window_that_was_scored():
     "window", [None, {}, {"start": "2026-06-01"}], ids=["missing", "empty", "half"]
 )
 def test_metrics_table_omits_the_window_when_it_is_incomplete(window):
-    html = report._metrics_table(_fresh_metadata(test_window=window))
+    html = accuracy_section._metrics_table(_fresh_metadata(test_window=window))
     assert "scored on the same held-out window." in html
     assert "None" not in html
 
@@ -195,22 +197,22 @@ def test_metrics_table_omits_the_window_when_it_is_incomplete(window):
 def test_metrics_table_caption_counts_the_rows_it_actually_rendered():
     # The caption used to say "All three" unconditionally, including for a legacy bundle
     # that renders the model row alone — a claim about rows that are not on the page.
-    full = report._metrics_table(_fresh_metadata())
+    full = accuracy_section._metrics_table(_fresh_metadata())
     assert "All 3 are scored on the same held-out window" in full
 
-    alone = report._metrics_table(_LEGACY_METADATA)
+    alone = accuracy_section._metrics_table(_LEGACY_METADATA)
     assert alone.count("<tr") == 2  # header + the model row
     assert "All 3" not in alone
     assert "Scored on the held-out window" in alone
 
 
 def test_metrics_table_falls_back_to_the_default_baseline_label():
-    html = report._metrics_table(_fresh_metadata(baseline_label=None))
+    html = accuracy_section._metrics_table(_fresh_metadata(baseline_label=None))
     assert baseline.LABELS["persistence"] in html
 
 
 def test_metrics_table_drops_reference_rows_a_legacy_bundle_never_stored():
-    html = report._metrics_table(_LEGACY_METADATA)
+    html = accuracy_section._metrics_table(_LEGACY_METADATA)
     assert "This project's model (this project)" in html
     assert baseline.LABELS["persistence"] not in html
     assert baseline.LABELS["climatology"] not in html
@@ -219,13 +221,13 @@ def test_metrics_table_drops_reference_rows_a_legacy_bundle_never_stored():
 
 # --- _verdict -----------------------------------------------------------------
 def test_verdict_leads_with_the_cross_validated_error_and_its_spread():
-    html = report._verdict(_fresh_metadata())
+    html = accuracy_section._verdict(_fresh_metadata())
     assert "Averaged over 5 rolling folds" in html
     assert "<strong>6.50 ± 1.25 µg/m³</strong>" in html
 
 
 def test_verdict_frames_the_single_split_as_the_flattering_number():
-    html = report._verdict(_fresh_metadata())
+    html = accuracy_section._verdict(_fresh_metadata())
     assert "it does better — <strong>3.00 µg/m³</strong>" in html
     assert "this sentence is the number to trust" in html
     assert "(2026-06-01 to 2026-06-30)" in html
@@ -233,14 +235,14 @@ def test_verdict_frames_the_single_split_as_the_flattering_number():
 
 def test_verdict_omits_the_spread_when_no_fold_std_was_stored():
     metadata = _fresh_metadata(cross_validation={"n_splits": 5, "mae_mean": 6.5})
-    html = report._verdict(metadata)
+    html = accuracy_section._verdict(metadata)
     assert "<strong>6.50 µg/m³</strong>" in html
     assert "±" not in html
 
 
 def test_verdict_stays_vague_about_folds_when_the_count_is_not_an_int():
     metadata = _fresh_metadata(cross_validation={"mae_mean": 6.5, "n_splits": None})
-    html = report._verdict(metadata)
+    html = accuracy_section._verdict(metadata)
     assert "Averaged over the whole year" in html
     assert "None" not in html
 
@@ -248,7 +250,7 @@ def test_verdict_stays_vague_about_folds_when_the_count_is_not_an_int():
 def test_verdict_warns_that_a_split_only_figure_is_one_season():
     metadata = _fresh_metadata()
     del metadata["cross_validation"]
-    html = report._verdict(metadata)
+    html = accuracy_section._verdict(metadata)
     assert "<strong>3.00 µg/m³</strong>" in html
     assert "This is a single season and not a year-round figure." in html
     assert "Averaged over" not in html
@@ -258,12 +260,12 @@ def test_verdict_warns_that_a_split_only_figure_is_one_season():
     "metadata", [{}, _NAN_METADATA], ids=["empty", "all_nan"]
 )
 def test_verdict_says_so_plainly_when_there_is_nothing_to_report(metadata):
-    assert report._verdict(metadata) == '<p class="verdict">No stored metrics for this model yet.</p>'
+    assert accuracy_section._verdict(metadata) == '<p class="verdict">No stored metrics for this model yet.</p>'
 
 
 # --- _skill_line --------------------------------------------------------------
 def test_skill_line_states_both_skill_figures_as_one_family():
-    html = report._skill_line(_fresh_metadata())
+    html = accuracy_section._skill_line(_fresh_metadata())
     assert "<strong>40.0% smaller</strong>" in html
     assert "removes <strong>67%</strong> of that rule's squared error" in html
     assert "it removes just 20%, and that second number is exactly what R² reports" in html
@@ -271,7 +273,7 @@ def test_skill_line_states_both_skill_figures_as_one_family():
 
 def test_skill_line_drops_the_r2_sentence_when_r2_was_not_stored():
     metadata = _fresh_metadata(model={"mae": 3.0, "rmse": 4.0})
-    html = report._skill_line(metadata)
+    html = accuracy_section._skill_line(metadata)
     assert "R² reports" not in html
     assert "squared error" in html
 
@@ -279,7 +281,7 @@ def test_skill_line_drops_the_r2_sentence_when_r2_was_not_stored():
 def test_skill_line_states_a_negative_r2_in_words_not_as_a_negative_percentage():
     """"Removes -42% of the error" is not a thing; a negative R² means no better at all."""
     metadata = _fresh_metadata(model=_metrics(r2=-0.42))
-    html = report._skill_line(metadata)
+    html = accuracy_section._skill_line(metadata)
     assert "-0.42" in html
     assert "no better at all" in html
     assert "-42%" not in html
@@ -287,7 +289,7 @@ def test_skill_line_states_a_negative_r2_in_words_not_as_a_negative_percentage()
 
 def test_skill_line_keeps_the_improvement_clause_alone_when_skill_is_missing():
     metadata = _fresh_metadata(skill_vs_persistence=None)
-    html = report._skill_line(metadata)
+    html = accuracy_section._skill_line(metadata)
     assert "40.0% smaller" in html
     assert "squared error" not in html
     assert "than the naive rule's. Against a flat line" in html  # no dangling conjunction
@@ -297,7 +299,7 @@ def test_skill_line_keeps_the_improvement_clause_alone_when_skill_is_missing():
     "metadata", [{}, _NAN_METADATA], ids=["empty", "all_nan"]
 )
 def test_skill_line_renders_nothing_without_a_comparison(metadata):
-    assert report._skill_line(metadata) == ""
+    assert accuracy_section._skill_line(metadata) == ""
 
 
 # --- _skill_line: the year-round comparison, added after the window one was found
@@ -309,21 +311,21 @@ _YEAR_ROUND = {
 
 
 def test_skill_line_leads_with_the_comparison_the_headline_error_comes_from():
-    html = report._skill_line(_fresh_metadata(**_YEAR_ROUND))
+    html = accuracy_section._skill_line(_fresh_metadata(**_YEAR_ROUND))
     assert html.index("same rolling folds") < html.index("held-out window")
     assert "<strong>24.5% smaller</strong>" in html
     assert "6.50 against 8.61 µg/m³" in html
 
 
 def test_skill_line_marks_the_window_figure_as_the_second_one_when_both_are_present():
-    html = report._skill_line(_fresh_metadata(**_YEAR_ROUND))
+    html = accuracy_section._skill_line(_fresh_metadata(**_YEAR_ROUND))
     assert "On the single held-out window in the table below, that gap is" in html
     # The window figure must not be re-introduced as if it were the primary claim.
     assert html.count("the model's average miss is") == 1
 
 
 def test_skill_line_keeps_the_window_wording_for_a_bundle_saved_before_this_change():
-    html = report._skill_line(_fresh_metadata())
+    html = accuracy_section._skill_line(_fresh_metadata())
     assert html.startswith('<p class="skill">On the held-out window, ')
     assert "rolling folds" not in html
 
@@ -338,7 +340,7 @@ def test_skill_line_keeps_the_window_wording_for_a_bundle_saved_before_this_chan
     ids=["no_pct", "no_baseline_cv", "nan_baseline_cv"],
 )
 def test_skill_line_drops_the_year_round_clause_when_half_of_it_is_missing(overrides):
-    html = report._skill_line(_fresh_metadata(**{**_YEAR_ROUND, **overrides}))
+    html = accuracy_section._skill_line(_fresh_metadata(**{**_YEAR_ROUND, **overrides}))
     assert "rolling folds" not in html
     assert "On the held-out window, " in html
     assert "nan" not in html and "None" not in html
@@ -511,12 +513,12 @@ def test_backtest_section_is_absent_from_a_legacy_bundle():
     ids=["positive", "negative", "zero", "nan", "missing"],
 )
 def test_fmt_signed_always_shows_the_direction(value, expected):
-    assert report._fmt_signed(value) == expected
+    assert formatting.fmt_signed(value) == expected
 
 
 # --- _selection_note ----------------------------------------------------------
 def test_selection_note_names_the_winner_and_every_candidate():
-    html = report._selection_note(_fresh_metadata())
+    html = accuracy_section.selection_note(_fresh_metadata())
     assert "<strong>HistGradientBoosting</strong>" in html
     for candidate in ("Ridge", "RandomForest", "HistGradientBoosting"):
         assert candidate in html
@@ -524,7 +526,7 @@ def test_selection_note_names_the_winner_and_every_candidate():
 
 def test_selection_note_states_that_cv_not_the_published_split_made_the_choice():
     """The whole point of selecting on CV is lost if the page doesn't say so."""
-    html = report._selection_note(_fresh_metadata())
+    html = accuracy_section.selection_note(_fresh_metadata())
     assert "cross-validation rather than on the window" in html
     assert "best-of-three" in html
 
@@ -533,7 +535,7 @@ def test_selection_note_judges_the_margin_fold_by_fold_not_against_the_spread():
     # The page cannot carry the paired argument in the horizon section and the refuted
     # level-spread argument here: comparing a delta to ±std is the reasoning CLAUDE.md now
     # names as wrong, and by that test the model's own win over the naive rule is a null.
-    html = report._selection_note(_fresh_metadata())
+    html = accuracy_section.selection_note(_fresh_metadata())
     assert "winning 4 of 5 folds" in html
     assert "these two are close" in html
     assert "±1.25" not in html
@@ -543,7 +545,7 @@ def test_selection_note_judges_the_margin_fold_by_fold_not_against_the_spread():
 def test_selection_note_states_the_margin_as_the_difference_not_the_winners_own_error():
     # "It won by 6.50" beside "6.50 against 6.90" invites the reader to subtract and catch
     # the page out by a factor of sixteen. The margin is the gap, not the winner's error.
-    html = report._selection_note(_fresh_metadata())
+    html = accuracy_section.selection_note(_fresh_metadata())
     assert "0.40 µg/m³ ahead of RandomForest" in html
     assert "6.50 against 6.90" in html
     assert "won by 6.50" not in html
@@ -552,7 +554,7 @@ def test_selection_note_states_the_margin_as_the_difference_not_the_winners_own_
 def test_selection_note_says_so_when_the_winner_was_never_behind():
     metadata = _fresh_metadata()
     metadata["selection"]["runner_up"] = "Ridge"
-    html = report._selection_note(metadata)
+    html = accuracy_section.selection_note(metadata)
     assert "winning 5 of 5 folds" in html
     assert "never came out behind on a fold" in html
 
@@ -561,14 +563,14 @@ def test_selection_note_counts_an_undisplayable_fold_margin_as_a_tie():
     metadata = _fresh_metadata()
     scores = metadata["selection"]["cv_by_model"]
     scores["RandomForest"]["fold_mae"] = [6.401, 7.3, 6.9, 7.2, 7.1]
-    html = report._selection_note(metadata)
+    html = accuracy_section.selection_note(metadata)
     assert "winning 4 of 5 folds, 1 tied" in html
     # No fold pointed the other way once the 0.001 separation is called what it is.
     assert "never came out behind on a fold" in html
 
 
 def test_selection_note_warns_that_the_winner_can_change_between_runs():
-    assert "can change between runs" in report._selection_note(_fresh_metadata())
+    assert "can change between runs" in accuracy_section.selection_note(_fresh_metadata())
 
 
 def test_selection_note_drops_the_margin_when_there_is_no_runner_up():
@@ -579,7 +581,7 @@ def test_selection_note_drops_the_margin_when_there_is_no_runner_up():
             "cv_by_model": {"Ridge": {"mae_mean": 8.0, "mae_std": 1.9}},
         }
     )
-    html = report._selection_note(metadata)
+    html = accuracy_section.selection_note(metadata)
     assert "<strong>Ridge</strong>" in html
     assert "ahead on" not in html
     assert "None" not in html
@@ -595,7 +597,7 @@ def test_selection_note_drops_the_margin_when_there_is_no_runner_up():
     ids=["empty", "legacy_bundle", "winner_absent_from_scores"],
 )
 def test_selection_note_renders_nothing_without_usable_selection_data(metadata):
-    assert report._selection_note(metadata) == ""
+    assert accuracy_section.selection_note(metadata) == ""
 
 
 def test_selection_note_survives_nan_cv_scores():
@@ -609,21 +611,21 @@ def test_selection_note_survives_nan_cv_scores():
             },
         }
     )
-    html = report._selection_note(metadata)
+    html = accuracy_section.selection_note(metadata)
     assert "nan" not in html
     assert "slim margin" not in html
 
 
 # --- _glossary ----------------------------------------------------------------
 def test_glossary_always_defines_all_three_metrics():
-    html = report._glossary({})
+    html = glossary_section.render({})
     assert "MAE — mean absolute error" in html
     assert "RMSE — root mean squared error" in html
     assert "R² — coefficient of determination" in html
 
 
 def test_glossary_puts_the_error_in_proportion_to_the_scored_window():
-    html = report._glossary(_fresh_metadata(model=_metrics(mae=5.0), test_mean_pm25=10.0))
+    html = glossary_section.render(_fresh_metadata(model=_metrics(mae=5.0), test_mean_pm25=10.0))
     assert "PM2.5 averaged <strong>10.0 µg/m³</strong>" in html
     assert "about 50% of a typical reading" in html
 
@@ -634,49 +636,49 @@ def test_glossary_puts_the_error_in_proportion_to_the_scored_window():
     ids=["no_mean", "nan_mean", "no_mae"],
 )
 def test_glossary_falls_back_to_generic_scale_prose_without_both_numbers(overrides):
-    html = report._glossary(_fresh_metadata(**overrides))
+    html = glossary_section.render(_fresh_metadata(**overrides))
     assert "For scale, compare the error against typical PM2.5 levels" in html
     assert "typical reading from that same period" not in html
 
 
 def test_glossary_reads_an_even_error_spread_as_no_disastrous_hours():
-    html = report._glossary(_fresh_metadata(model=_metrics(mae=4.0, rmse=5.2)))
+    html = glossary_section.render(_fresh_metadata(model=_metrics(mae=4.0, rmse=5.2)))
     assert "Here RMSE is 1.30× the MAE" in html
     assert "no small group of disastrous hours" in html
 
 
 def test_glossary_flags_a_wide_spread_as_a_few_large_misses():
-    html = report._glossary(_fresh_metadata(model=_metrics(mae=4.0, rmse=7.2)))
+    html = glossary_section.render(_fresh_metadata(model=_metrics(mae=4.0, rmse=7.2)))
     assert "Here RMSE is 1.80× the MAE" in html
     assert "a minority of large misses dominates" in html
 
 
 def test_glossary_survives_a_zero_mae_without_dividing_by_it():
-    html = report._glossary(_fresh_metadata(model=_metrics(mae=0.0, rmse=0.0)))
+    html = glossary_section.render(_fresh_metadata(model=_metrics(mae=0.0, rmse=0.0)))
     assert "Comparing RMSE against MAE tells you" in html
     assert "inf" not in html
 
 
 def test_glossary_quotes_the_windows_variation_against_the_training_period():
-    html = report._glossary(_fresh_metadata())
+    html = glossary_section.render(_fresh_metadata())
     assert "PM2.5 varied by only 4.0 µg/m³ (standard deviation)" in html
     assert "against 12.0 over the training period" in html
 
 
 def test_glossary_explains_three_rows_when_the_references_were_recorded():
-    html = report._glossary(_fresh_metadata())
+    html = glossary_section.render(_fresh_metadata())
     assert "Why there are three rows, not one." in html
     assert "predates the comparison being recorded" not in html
 
 
 def test_glossary_explains_the_missing_rows_for_a_legacy_bundle():
-    html = report._glossary(_LEGACY_METADATA)
+    html = glossary_section.render(_LEGACY_METADATA)
     assert "predates the comparison being recorded" in html
     assert "Why there are three rows, not one." not in html
 
 
 def test_glossary_drops_the_r2_reading_when_r2_was_not_stored():
-    html = report._glossary(_fresh_metadata(model={"mae": 3.0, "rmse": 4.0}))
+    html = glossary_section.render(_fresh_metadata(model={"mae": 3.0, "rmse": 4.0}))
     assert "close to that floor" not in html
     assert "R² — coefficient of determination" in html
 
@@ -804,9 +806,9 @@ def test_horizon_section_renders_nothing_without_a_curve_to_draw(metadata):
 # --- Cross-cutting: nothing unusable ever reaches the page --------------------
 @pytest.mark.parametrize(
     "builder",
-    [report._metrics_table, report._verdict, report._skill_line,
+    [accuracy_section._metrics_table, accuracy_section._verdict, accuracy_section._skill_line,
      regime_section.render, report._backtest_section, report._horizon_section,
-     report._rejected_section, report._glossary],
+     report._rejected_section, glossary_section.render],
     ids=["metrics_table", "verdict", "skill_line", "regime_section",
          "backtest_section", "horizon_section", "rejected_section", "glossary"],
 )
@@ -854,20 +856,20 @@ def trained_metadata():
 def test_every_section_renders_real_metadata_without_falling_back(trained_metadata):
     # If run_experiment renames a key, the report degrades silently to n/a / blank
     # prose rather than raising — so the contract is asserted from the reader's side.
-    table = report._metrics_table(trained_metadata)
+    table = accuracy_section._metrics_table(trained_metadata)
     assert "n/a" not in table
     assert table.count("<tr") == 4
     assert trained_metadata["test_window"]["start"] in table
 
-    verdict = report._verdict(trained_metadata)
+    verdict = accuracy_section._verdict(trained_metadata)
     assert "Averaged over 3 rolling folds" in verdict
     assert "this sentence is the number to trust" in verdict
 
-    skill = report._skill_line(trained_metadata)
+    skill = accuracy_section._skill_line(trained_metadata)
     assert "squared error" in skill
     assert "R² reports" in skill
 
-    glossary = report._glossary(trained_metadata)
+    glossary = glossary_section.render(trained_metadata)
     assert "Why there are three rows, not one." in glossary
     assert "typical reading from that same period" in glossary
 
