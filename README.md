@@ -243,8 +243,9 @@ and weather correlations — is in
 src/wroclaw_air_insights/
   config.py  clean.py  db.py  pipeline.py
   report.py  charts.py  formatting.py                       # page composition
-  horizon_section.py  regime_section.py  rejected_section.py  # its longer sections
-  interval_section.py                                         # and the coverage check
+  accuracy_section.py  horizon_section.py  regime_section.py  # its longer sections
+  interval_section.py  rejected_section.py                    # and the coverage check
+  glossary_section.py                                         # what the metrics mean
   ingest/    gios.py  weather.py
   forecast/  features.py  baseline.py  model.py  horizon.py  serving.py
              ab.py  specialists.py  intervals.py  prospective.py   # measurement + the log
