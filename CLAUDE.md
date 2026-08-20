@@ -36,6 +36,7 @@ src/wroclaw_air_insights/
                        #      score-log / predict / all
 notebooks/01_analysis.ipynb
 tests/                 # pytest
+docs/methodology.md    # the long form the README points at: every measurement + the nulls
 docs/ideas/            # roadmap: measured results, including the rejected ones
 docs/research/         # data-source research
 .github/workflows/     # ci.yml (tests) + refresh.yml (daily Pages deploy)
