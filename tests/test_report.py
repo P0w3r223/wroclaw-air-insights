@@ -459,7 +459,7 @@ def test_backtest_section_embeds_the_chart_and_counts_the_hours():
     html = report._backtest_section(_fresh_metadata(backtest=_backtest()))
     assert "The last 14 days of the test window" in html
     assert "337 hours the model had never seen" in html
-    assert 'src="data:image/png;base64,' in html
+    assert '<svg class="chart"' in html
 
 
 @pytest.mark.parametrize(
@@ -485,7 +485,7 @@ def test_backtest_section_says_which_model_the_chart_is_not_from():
 
 def test_backtest_section_renders_without_the_naive_series():
     html = report._backtest_section(_fresh_metadata(backtest=_backtest(naive=False)))
-    assert 'src="data:image/png;base64,' in html
+    assert '<svg class="chart"' in html
 
 
 @pytest.mark.parametrize(
@@ -914,10 +914,29 @@ def _page(metadata, aqi=_AQI, forecast_df=None, station_id=None):
     )
 
 
+def _badge(html):
+    """The category the index badge renders, whatever inline colours it carries.
+
+    The badge's background and its ink are both computed from the GIOŚ category, so the
+    element cannot be matched as a fixed string without pinning the palette into a test that
+    is not about the palette."""
+    found = re.search(r'<span class="badge"[^>]*>(.*?)</span>', html)
+    return found.group(1) if found else None
+
+
+def _rules(html):
+    """(selector, declarations) for every rule in the page's inlined stylesheet.
+
+    Rules nested in an `@media` block are returned as themselves; the wrapper is skipped,
+    which is what a caller asking "can this selector reach a header" wants either way."""
+    stylesheet = html[html.index("<style>"):html.index("</style>")]
+    return re.findall(r"([^{}]+)\{([^{}]*)\}", stylesheet)
+
+
 def _prose_only(html):
-    """Strip the embedded PNGs — base64 payloads contain arbitrary letter runs, so a
-    naive `"nan" not in html` would fail on chart bytes rather than on rendered text."""
-    return re.sub(r"data:image/png;base64,[^\"]*", "", html)
+    """Strip the inlined figures — path data and glyph ids carry arbitrary letter runs, so a
+    naive `"nan" not in html` would fail on chart markup rather than on rendered text."""
+    return re.sub(r"<svg\b.*?</svg>", "", html, flags=re.DOTALL)
 
 
 def test_render_page_normalises_a_bundle_that_stored_metrics_under_the_old_key():
@@ -1019,14 +1038,14 @@ def test_render_page_always_renders_a_badge_the_palette_has_a_colour_for(
     aqi, expected_category
 ):
     html = _page(_fresh_metadata(), aqi=aqi)
-    assert f'<span class="badge">{expected_category}</span>' in html
+    assert _badge(html) == expected_category
     assert report._AQI_COLORS[expected_category] in html
 
 
 def test_render_page_falls_back_to_grey_for_a_category_the_palette_never_saw():
     # GIOŚ owning the category vocabulary means a new label must not take the page down.
     html = _page(_fresh_metadata(), aqi={"overall": {"category": "Katastrofalny"}})
-    assert '<span class="badge">Katastrofalny</span>' in html
+    assert _badge(html) == "Katastrofalny"
     assert "#9e9e9e" in html
 
 
@@ -1311,7 +1330,7 @@ def test_contents_offers_only_sections_that_are_on_the_page():
 
 def test_contents_and_sections_agree_on_what_the_page_holds():
     html = _page(_fresh_metadata())
-    anchors = re.findall(r'<section class="card" id="([a-z]+)"', html)
+    anchors = re.findall(r'<section id="([a-z]+)"', html)
     linked = re.findall(r'<nav class="toc"[^>]*>(.*?)</nav>', html, flags=re.S)
     assert anchors, "the page rendered no sections at all"
     assert linked, "the page rendered sections but no way to reach them"
@@ -1326,9 +1345,18 @@ def test_sections_keep_page_order_rather_than_dict_order():
 
 def test_metric_headers_are_not_upper_cased_by_the_stylesheet():
     """`text-transform: uppercase` renders µ as a capital mu, so "(µg/m³)" reads as
-    "(MG/M³)" — a unit a thousand times too large, in a header the page cannot annotate."""
-    html = _page(_fresh_metadata())
-    assert "text-transform: uppercase" not in html
+    "(MG/M³)" — a unit a thousand times too large, in a header the page cannot annotate.
+
+    The page does uppercase one thing on purpose — the eyebrow above the title, which is
+    ASCII — so the question is asked of the rules that can reach a table header rather than
+    of the whole stylesheet."""
+    reaching_headers = [
+        body
+        for selector, body in _rules(_page(_fresh_metadata()))
+        if re.search(r"\bth\b", selector)
+    ]
+    assert reaching_headers, "the stylesheet no longer styles table headers"
+    assert not any("text-transform" in body for body in reaching_headers)
 
 
 # --- the index badge: what it is an index of ------------------------------------
@@ -1389,5 +1417,5 @@ def test_badge_does_not_name_a_critical_pollutant_the_payload_omits():
 
 def test_page_carries_the_badge_note_next_to_the_badge():
     html = _page(_fresh_metadata(), aqi=_AQI_NO_OVERALL)
-    assert '<span class="badge">Bardzo dobry</span>' in html
+    assert _badge(html) == "Bardzo dobry"
     assert "no overall index" in html

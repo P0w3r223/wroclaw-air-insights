@@ -1,13 +1,14 @@
 """Generate a self-contained HTML report for GitHub Pages.
 
 Combines the live 24h PM2.5 forecast, the current air-quality index, and the saved
-model's metrics into a single standalone HTML file (chart embedded as base64), so it
-can be published to Pages with no external assets.
+model's metrics into a single standalone HTML file (charts inlined as SVG, stylesheet
+inlined from ``assets/page.css``), so it can be published to Pages with no external assets.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from importlib import resources
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -27,8 +28,6 @@ from wroclaw_air_insights.ingest import gios
 _horizon_section = horizon_section.render
 _rejected_section = rejected_section.render
 
-_ACCENT = charts.ACCENT  # the page CSS and the figures share one accent colour
-
 # Polish air-quality index categories -> display colour. GIOŚ owns this vocabulary, so a
 # category outside the table falls back to the neutral badge rather than taking the page down.
 _NEUTRAL_BADGE = "#9e9e9e"
@@ -43,6 +42,14 @@ _AQI_COLORS = {
 }
 _DEFAULT_REPORT_PATH = config.PROJECT_ROOT / "reports" / "site" / "index.html"
 
+# The stylesheet ships as a file rather than as a literal in the page template below, which is
+# an f-string: every brace in a CSS rule would have to be doubled, and a transcription step
+# between what is written and what is published is exactly the kind of gap this page cannot
+# afford. Read once at import — it is the same bytes on every build.
+_STYLESHEET = (
+    resources.files("wroclaw_air_insights").joinpath("assets/page.css").read_text("utf-8")
+)
+
 # Named once and used by both the opening paragraph and the footer, so the two cannot drift.
 _REPO_URL = "https://github.com/P0w3r223/wroclaw-air-insights"
 
@@ -55,7 +62,7 @@ _REPO_URL = "https://github.com/P0w3r223/wroclaw-air-insights"
 # could contradict — the failure mode this project keeps re-learning. The one thing it does
 # say about the rejected experiments is that they are *dated*, because unlike the rest of the
 # page they are a record of when they were measured rather than a recomputation.
-_ABOUT = f"""<p class="lede">A portfolio data project, published live: each morning hourly
+_ABOUT = f"""<p class="lead">A portfolio data project, published live: each morning hourly
 GIOŚ measurements and Open-Meteo weather land in a SQLite store, a PM2.5 forecast is
 retrained on the rolling year behind them, and this page is rebuilt from that run. The model
 it selected, the error it measured and the hours each predictor earned are recomputed every
@@ -116,6 +123,20 @@ def _index_badge(aqi: dict) -> tuple[str, str, str, str]:
   now.{because} The badge above is the PM2.5 sub-index, which is the pollutant this page
   forecasts.</p>"""
     return pm25, _AQI_COLORS.get(pm25, _NEUTRAL_BADGE), _PM25_INDEX, note
+
+
+def _badge_ink(colour: str) -> str:
+    """Black or white text on the index badge, chosen from the colour underneath it.
+
+    GIOŚ owns these colours and two of the six are pale — “Umiarkowany” is a light amber. White
+    on it was the page's worst contrast by a wide margin, and it is the badge a reader looks at
+    first. Relative luminance decides instead of a hand-kept list, so a colour GIOŚ adds later
+    is legible without anyone noticing it needs to be.
+    """
+    channels = [int(colour[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    return "#1c2430" if luminance > 0.42 else "#ffffff"
 
 
 def _forecast_origin(forecast_df: pd.DataFrame, generated_at: datetime):
@@ -214,7 +235,7 @@ def _backtest_section(metadata: dict) -> str:
     span = f"{covered} days" if covered >= 2 else ("day" if covered == 1 else "hours")
     hours = len(stamps)
     return f"""  <h2>The last {span} of the test window, hour by hour</h2>
-  <img src="data:image/png;base64,{chart}" alt="Forecast against measured PM2.5">
+  <div class="chart-wrap">{chart}</div>
   <p class="hint">{hours:,} hours the model had never seen — from the chronologically-trained
   model, not the one serving the chart at the top. That one is
   refitted on all available data, so plotting <em>its</em> fit over recent days would be
@@ -306,9 +327,15 @@ def _contents(present: dict[str, str]) -> str:
 
 
 def _sections(present: dict[str, str]) -> str:
-    """Each rendered section as its own card, in page order."""
+    """Each rendered section in page order, separated by the rule its heading carries.
+
+    Not boxed. A page of eight cards reads as eight unrelated things, and the argument here runs
+    top to bottom — the accuracy figure is what the lead axis then qualifies. Dropping the box
+    also hands every table the card's padding back, which is the width the tightest one on a
+    phone was short of.
+    """
     return "\n".join(
-        f'<section class="card" id="{anchor}">\n{present[anchor]}\n</section>'
+        f'<section id="{anchor}">\n{present[anchor]}\n</section>'
         for anchor, _ in _SECTION_LABELS
         if present.get(anchor)
     )
@@ -338,7 +365,8 @@ def _render_page(
 
     category, colour, badge_for, index_note = _index_badge(aqi)
     qualifier = f'<span class="badge-for">{badge_for}</span>' if badge_for else ""
-    chart_b64 = charts.forecast(forecast_df)
+    badge_style = f"background: {colour}; color: {_badge_ink(colour)}"
+    forecast_chart = charts.forecast(forecast_df)
     # The largest number on the page, and it comes from the frame rather than from the
     # metadata — so it needs the same gate every stored metric already passes. Called the
     # highest hour rather than the forecast peak because the earliest hours may be the
@@ -366,159 +394,30 @@ def _render_page(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wrocław Air Insights — live forecast</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<title>Wrocław Air Insights — live PM2.5 forecast</title>
+<meta name="description" content="A live 24-hour PM2.5 forecast for Wrocław, rebuilt daily from
+GIOŚ measurements and Open-Meteo weather, with the error and the checks behind it.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Wrocław Air Insights — live PM2.5 forecast">
+<meta property="og:url" content="https://p0w3r223.github.io/wroclaw-air-insights/">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#127788;</text></svg>">
 <style>
-  :root {{ --ink: #1c2430; --muted: #667085; --line: #e6eaf2; --accent: {_ACCENT};
-          --paper: #ffffff; --bg: #f5f7fb; }}
-  * {{ box-sizing: border-box; }}
-  body {{ font: 16px/1.6 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-         -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-         max-width: 900px; margin: 0 auto; padding: 28px 18px 56px;
-         color: var(--ink); background: var(--bg); }}
-  h1 {{ margin: 0 0 2px; font-size: 1.8rem; font-weight: 700; letter-spacing: -0.02em; }}
-  h2 {{ margin: 0 0 10px; font-size: 1.12rem; font-weight: 600; letter-spacing: -0.01em; }}
-  h3 {{ font-weight: 600; font-size: 1rem; margin: 24px 0 8px; }}
-  p {{ margin: 10px 0; }}
-  .sub {{ color: var(--muted); margin: 0 0 10px; }}
-  /* The opening paragraph: set below body size so it introduces the page without competing
-     with the forecast card, but not in muted grey — it is the one part a first-time reader
-     is meant to actually read. */
-  .lede {{ font-size: 0.95rem; color: #3b4657; margin: 0 0 18px; max-width: 68ch; }}
-  .badge {{ display: inline-block; padding: 0.34rem 0.8rem; border-radius: 999px;
-           color: #fff; font-weight: 600; font-size: 0.85rem; background: {colour}; }}
-  /* The badge is not always the overall index, so when it is a sub-index it says which. */
-  .badge-for {{ color: var(--muted); font-size: 0.78rem; margin-left: 7px; }}
-  .card {{ background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
-          padding: 20px 22px; margin: 16px 0; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); }}
-  section.card {{ scroll-margin-top: 62px; }}
-  table {{ border-collapse: collapse; width: 100%; }}
-  th, td {{ text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef1f6; }}
-  img {{ display: block; max-width: 100%; height: auto; border-radius: 8px; margin: 4px 0; }}
-  code {{ background: #eef1f6; padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }}
-  footer {{ color: var(--muted); font-size: 0.85rem; margin-top: 24px; text-align: center; }}
-  a {{ color: var(--accent); }}
-
-  /* --- The headline figures, above the argument that earns them --- */
-  .stats {{ display: grid; gap: 12px; margin: 16px 0;
-           grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); }}
-  .stat {{ background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
-          padding: 13px 15px; }}
-  .stat b {{ display: block; font-size: 1.4rem; font-weight: 600; letter-spacing: -0.02em;
-            font-variant-numeric: tabular-nums; }}
-  .stat .what {{ display: block; font-size: 0.85rem; margin-top: 2px; }}
-  .stat .why {{ display: block; color: var(--muted); font-size: 0.76rem; margin-top: 3px; }}
-
-  /* --- Jump list: the page is long by design, so it says what is on it --- */
-  nav.toc {{ position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 7px;
-            padding: 10px 0 9px; margin: 4px 0 0; background: var(--bg); }}
-  nav.toc a {{ text-decoration: none; font-size: 0.8rem; color: var(--muted);
-              background: var(--paper); border: 1px solid var(--line);
-              border-radius: 999px; padding: 4px 11px; }}
-  nav.toc a:hover {{ color: var(--accent); border-color: #c8d6f6; }}
-
-  /* --- Model quality: metrics table, verdict line, collapsible detail --- */
-  /* Not uppercased. A header reading "Typical width (µg/m³)" renders as "(MG/M³)" under
-     text-transform — the micro sign upper-cases to a capital mu, which is indistinguishable
-     from an M. The column then names a unit a thousand times too large. */
-  .metrics th {{ font-size: 0.85rem; letter-spacing: 0.01em; white-space: nowrap;
-                color: var(--muted); font-weight: 600; }}
-  .metrics th + th, .metrics td + td {{ text-align: right;
-                font-variant-numeric: tabular-nums; width: 6.5rem; }}
-  .metrics tr.deployed td {{ font-weight: 600; }}
-  .metrics.regimes th + th, .metrics.regimes td + td {{ width: 5.5rem; }}
-  .metrics.regimes td:nth-child(4), .metrics.regimes td:nth-child(5) {{ color: var(--muted); }}
-  .metrics.regimes td .hint {{ font-size: 0.78rem; }}
-  .hint {{ color: var(--muted); font-size: 0.84rem; margin: 8px 0 0; }}
-  .skill {{ margin: 14px 0 0; font-size: 0.95rem; }}
-  .verdict {{ background: #f4f7fd; border-left: 3px solid var(--accent);
-             border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 16px 0 4px; }}
-
-  /* One disclosure pattern for the whole page: the claim and its verdict stay open, the
-     argument that establishes them is one click away. */
-  details.more {{ margin-top: 14px; }}
-  /* The glossary owns its card, so its summary is that card's heading — sized like one
-     rather than like a footnote a reader has to go looking for. */
-  details.glossary > summary {{ font-size: 1.12rem; color: var(--ink); padding: 0; }}
-  details.glossary > summary::before {{ color: var(--accent); }}
-  details > summary {{ cursor: pointer; font-weight: 600; color: var(--accent);
-             list-style: none; padding: 4px 0; }}
-  details > summary::-webkit-details-marker {{ display: none; }}
-  details > summary::before {{ content: "＋ "; font-weight: 400; }}
-  details[open] > summary::before {{ content: "－ "; }}
-  details.more > summary {{ font-size: 0.86rem; font-weight: 500; }}
-  details.more > p {{ font-size: 0.9rem; color: #3b4657; margin: 8px 0; }}
-  details.glossary dl {{ margin: 12px 0 0; }}
-  details.glossary dt {{ font-weight: 600; margin-top: 18px; }}
-  details.glossary dd {{ margin: 6px 0 0; padding-left: 14px;
-             border-left: 2px solid #eef1f6; }}
-  details.glossary dd p {{ margin: 6px 0; }}
-  .unit {{ color: var(--muted); font-weight: 400; font-size: 0.85em; }}
-
-  /* --- Measured and rejected: same shape as the glossary, but not folded away --- */
-  dl.rejected {{ margin: 14px 0 0; }}
-  dl.rejected dt {{ font-weight: 600; margin-top: 18px; }}
-  dl.rejected dd {{ margin: 6px 0 0; padding-left: 14px; border-left: 2px solid #eef1f6; }}
-  dl.rejected dd p {{ margin: 6px 0; font-size: 0.93rem; }}
-  .note {{ background: #fbfbf9; border: 1px solid #eef1f6; border-radius: 8px;
-          padding: 12px 14px; margin-top: 16px; font-size: 0.93rem; }}
-
-  /* The lead-time table is seven columns wide and a phone is not. Scrolling one table
-     beats reflowing every number into an unreadable column. */
-  @media (max-width: 640px) {{
-    body {{ padding: 20px 12px 44px; }}
-    .card {{ padding: 16px 14px; }}
-    table {{ display: block; overflow-x: auto; }}
-    /* Numbers must not wrap; the label column may. Holding the whole table on one line is
-       what pushed the four-column tables into a scroll they do not need. Freeing the fixed
-       numeric widths gets them there on a wide phone; a narrow one needs the block below
-       as well. */
-    .metrics th + th, .metrics td + td {{ width: auto; white-space: nowrap; }}
-  }}
-
-  /* Measured at a real 390 px viewport (CDP device emulation — a narrow `--window-size`
-     screenshot is cropped, not reflowed, and shows overflow that is not there): all four
-     tables were scrolling, not just the seven-column one. Two causes. The regime table's
-     own width rule outranks the override above on specificity, so it kept a fixed 5.5rem
-     per column down to the narrowest screen; and at body size with 10px cell padding,
-     five columns of numbers need ~427 px against the ~336 a 390 px phone leaves inside a
-     card. Tighter type and padding buy back the difference. Headers wrap from here down —
-     "Typical width (µg/m³)" set on one line is wider than the column it labels — while
-     the numbers still never do.
-
-     Where this lands, measured rather than hoped: at 390 px the lead table is the only one
-     that scrolls, which is the whole point of the rule. The metrics table is the tight one,
-     and it must be sized for winter rather than for today — its floor is the longest
-     unbreakable word in the label column (a model name) plus four numeric columns, which
-     comes to 324 px against the 336 available once MAE and RMSE go two-digit. Measured at
-     0.82rem/5px that same case came to 346 and scrolled, which is why the type is smaller
-     than a first fit suggested: a table that fits only while the air is clean is a table
-     that breaks in the smog season this page exists for.
-
-     Below ~380 px the margin is gone and the metrics table scrolls again. Going further
-     would mean hyphenating "HistGradientBoosting" mid-word or type under 12 px, and a
-     scrolling table is the better of those three. */
-  @media (max-width: 480px) {{
-    .metrics {{ font-size: 0.78rem; }}
-    .metrics th, .metrics td {{ padding: 4px 4px; }}
-    .metrics th, .metrics th + th {{ white-space: normal; }}
-    .metrics td + td {{ white-space: nowrap; }}
-    .metrics th + th, .metrics td + td,
-    .metrics.regimes th + th, .metrics.regimes td + td {{ width: auto; }}
-  }}
+{_STYLESHEET}
 </style>
 </head>
 <body>
-<h1>Wrocław Air Insights</h1>
-<p class="sub">Live 24-hour PM2.5 forecast — {_station_name(station_id)}</p>
-{_ABOUT}
 
-<div class="card">
-  <p>Current air-quality index: <span class="badge">{category}</span>{qualifier}</p>
+<header>
+  <p class="eyebrow">{_station_name(station_id)} · rebuilt daily</p>
+  <h1>Live 24-hour PM2.5 forecast</h1>
+  {_ABOUT}
+</header>
+
+<div class="card hero">
+  <p>Current air-quality index: <span class="badge" style="{badge_style}">{category}</span>{qualifier}</p>
   {index_note}
-  <img src="data:image/png;base64,{chart_b64}" alt="24h PM2.5 forecast">
+  <div class="chart-wrap">{forecast_chart}</div>
   {freshness}
 </div>
 
@@ -534,6 +433,7 @@ def _render_page(
 </body>
 </html>
 """
+
     return html
 
 

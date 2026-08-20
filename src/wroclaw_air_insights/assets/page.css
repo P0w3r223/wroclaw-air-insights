@@ -1,0 +1,288 @@
+/* The published page's stylesheet, inlined into the single HTML file report.py writes.
+
+   It lives here rather than inside the page template because that template is an f-string:
+   every brace in a rule had to be doubled, which is a transcription step between what is
+   written and what ships. A stylesheet is not the place for one.
+
+   Both colour schemes are first-class. The palette is a set of custom properties and dark mode
+   swaps the values rather than restating the design — the charts read those same properties,
+   which is why they are inline SVG and not images. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --line: #e3e7ee;
+  --ink: #1c2430;
+  --muted: #5b6472;
+  --accent: #2563eb;
+  --accent-soft: #dbe7ff;
+  --warn: #b45309;
+  /* The per-lead specialist is a third estimator, not a shade of the model. */
+  --specialist: #0f9d78;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1319;
+    --surface: #161c25;
+    --line: #263041;
+    --ink: #e6eaf2;
+    --muted: #98a3b6;
+    --accent: #6ea8fe;
+    --accent-soft: #1e2c45;
+    --warn: #fbbf24;
+    --specialist: #2dd4a7;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 0.5rem;
+}
+
+h1 {
+  font-size: clamp(1.75rem, 1.2rem + 2.2vw, 2.6rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.75rem;
+}
+
+/* Sections are separated by a rule rather than boxed. A page of twelve cards reads as twelve
+   unrelated things; the argument here runs top to bottom. */
+h2 {
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.35rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--line);
+}
+
+h3 { font-size: 1rem; margin: 1.5rem 0 0.25rem; }
+p { margin: 0.5rem 0; }
+section { margin: 2.25rem 0 0; scroll-margin-top: 3.5rem; }
+/* The opening paragraph: the one part of the page a first-time reader is meant to actually
+   read, so it is set above body size and not in muted grey. */
+.lead { font-size: 1.05rem; max-width: 46rem; margin: 0 0 1.25rem; }
+.sub { color: var(--muted); margin: 0 0 0.75rem; }
+.hint { color: var(--muted); font-size: 0.86rem; margin: 0.5rem 0 0; }
+.skill { margin: 0.9rem 0 0; }
+.unit { color: var(--muted); font-weight: 400; font-size: 0.85em; }
+
+.badge {
+  display: inline-block;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+/* The badge is not always the overall index, so when it is a sub-index it says which. */
+.badge-for { color: var(--muted); font-size: 0.78rem; margin-left: 0.45rem; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  margin: 1.25rem 0;
+}
+
+/* The forecast is the reason the page exists; it is the one block that keeps a box. */
+.card.hero { margin: 1.5rem 0; }
+
+/* --- The headline figures, above the argument that earns them --- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+.stat b {
+  display: block;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stat .what { display: block; font-size: 0.85rem; font-weight: 600; margin-top: 0.1rem; }
+.stat .why { display: block; color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+
+/* --- Jump list: the page is long by design, so it says what is on it --- */
+nav.toc {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  /* No rule of its own: the first section heading draws one a few pixels below, and two
+     hairlines that close together read as a rendering fault. */
+  padding: 0.7rem 0 0.9rem;
+  background: var(--bg);
+}
+nav.toc a {
+  text-decoration: none;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+}
+nav.toc a:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Charts scroll inside their own box; the page itself never scrolls sideways. */
+.chart-wrap { overflow-x: auto; margin: 0.75rem 0; }
+.chart { display: block; max-width: 100%; height: auto; }
+
+/* --- Tables --- */
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); }
+
+/* Not uppercased. A header reading "Typical width (µg/m³)" renders as "(MG/M³)" under
+   text-transform — the micro sign upper-cases to a capital mu, which is indistinguishable
+   from an M. The column then names a unit a thousand times too large. */
+.metrics th {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.metrics th + th, .metrics td + td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 6.5rem;
+}
+.metrics tr.deployed td { font-weight: 600; }
+.metrics.regimes th + th, .metrics.regimes td + td { width: 5.5rem; }
+.metrics.regimes td:nth-child(4), .metrics.regimes td:nth-child(5) { color: var(--muted); }
+.metrics.regimes td .hint { font-size: 0.78rem; }
+
+.verdict {
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0 0.25rem;
+}
+
+.note {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  margin-top: 1rem;
+  font-size: 0.93rem;
+}
+
+/* One disclosure pattern for the whole page: the claim and its verdict stay open, the
+   argument that establishes them is one click away. */
+details { margin: 0.9rem 0 0; }
+details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  list-style: none;
+  padding: 0.25rem 0;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "＋ "; font-weight: 400; }
+details[open] > summary::before { content: "－ "; }
+details.more > summary { font-size: 0.86rem; font-weight: 500; }
+details.more > p { font-size: 0.9rem; color: var(--muted); margin: 0.5rem 0; }
+/* The glossary is a whole section behind one click, so its summary is that section's heading —
+   sized like one, and carrying the rule every other section heading gets, rather than reading
+   like a footnote a reader has to go looking for. */
+details.glossary { border-top: 1px solid var(--line); padding-top: 1.75rem; margin-top: 0; }
+details.glossary > summary {
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  padding: 0;
+}
+details.glossary > summary::before { color: var(--accent); }
+
+dl { margin: 0.9rem 0 0; }
+dt { font-weight: 600; margin-top: 1.1rem; }
+dd { margin: 0.4rem 0 0; padding-left: 0.9rem; border-left: 2px solid var(--line); }
+dd p { margin: 0.4rem 0; }
+dl.rejected dd p { font-size: 0.93rem; }
+
+footer {
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* The lead-time table is seven columns wide and a phone is not. Scrolling one table
+   beats reflowing every number into an unreadable column. */
+@media (max-width: 640px) {
+  body { padding: 1.5rem 0.85rem 3rem; }
+  table { display: block; overflow-x: auto; }
+  /* Numbers must not wrap; the label column may. Holding the whole table on one line is
+     what pushed the four-column tables into a scroll they do not need. Freeing the fixed
+     numeric widths gets them there on a wide phone; a narrow one needs the block below
+     as well. */
+  .metrics th + th, .metrics td + td { width: auto; white-space: nowrap; }
+}
+
+/* Measured at a real 390 px viewport (CDP device emulation — a narrow `--window-size`
+   screenshot is cropped, not reflowed, and shows overflow that is not there). Two causes had
+   every table scrolling, not just the seven-column one: the regime table's own width rule
+   outranks the override above on specificity, so it kept a fixed 5.5rem per column down to the
+   narrowest screen; and at body size with wide cell padding, five columns of numbers need more
+   room than a phone leaves. Tighter type and padding buy back the difference. Headers wrap from
+   here down — "Typical width (µg/m³)" set on one line is wider than the column it labels —
+   while the numbers still never do.
+
+   The metrics table is the tight one, and it is sized for winter rather than for today: its
+   floor is the longest unbreakable word in the label column (a model name) plus four numeric
+   columns, measured with MAE and RMSE gone two-digit. A table that fits only while the air is
+   clean is a table that breaks in the smog season this page exists for. */
+@media (max-width: 480px) {
+  .metrics { font-size: 0.78rem; }
+  .metrics th, .metrics td { padding: 0.25rem; }
+  .metrics th, .metrics th + th { white-space: normal; }
+  .metrics td + td { white-space: nowrap; }
+  .metrics th + th, .metrics td + td,
+  .metrics.regimes th + th, .metrics.regimes td + td { width: auto; }
+}
+
+@media print {
+  body { max-width: none; }
+  nav.toc { display: none; }
+  details { display: none; }
+}
