@@ -1,12 +1,20 @@
-"""Matplotlib figures for the report, rendered to embeddable base64 PNGs.
+"""Matplotlib figures for the report, rendered as inline SVG that inherits the page palette.
 
 Split out of ``report`` so that module composes prose and this one draws pictures. The
-functions here take numbers and return an image; deciding *whether* there is anything worth
+functions here take numbers and return markup; deciding *whether* there is anything worth
 drawing — a metric that came back NaN, a series too short to be a curve — stays with the
 section builders, where it can be tested without rendering anything.
 
-Every figure is returned as base64 rather than written to disk: the published page is a
+Every figure is returned as inline markup rather than written to disk: the published page is a
 single self-contained HTML file with no external assets.
+
+**SVG, not PNG, and that is a colour decision rather than a resolution one.** The page ships a
+dark palette, and a chart baked as pixels carries whichever palette it was drawn under — a
+white PNG on a dark page is not a styling blemish, it is a light box the reader's eyes land on
+first. Inline SVG participates in the document's cascade, so every colour below is written out
+as a CSS custom property and the figure follows the page into either scheme. That is why the
+palette here is a *mapping* rather than a set of hex constants: matplotlib has to be handed
+real colours to draw with, and ``_themed`` swaps them for the variables afterwards.
 
 Three layout rules are shared by every figure here, because the page reads as one system
 and because each was a defect on the published page first:
@@ -22,9 +30,9 @@ and because each was a defect on the published page first:
 
 from __future__ import annotations
 
-import base64
 import io
 import math
+import re
 from datetime import datetime
 
 import matplotlib
@@ -36,7 +44,11 @@ import matplotlib.pyplot as plt  # noqa: E402
 from wroclaw_air_insights import config  # noqa: E402
 from wroclaw_air_insights.forecast import baseline  # noqa: E402
 
-# --- Chart styling: clean, print-quality matplotlib aligned with the page palette. ---
+# --- Chart styling: clean matplotlib, drawn in the page's own palette. ---
+# The hex values are what matplotlib draws with; `_THEMED` is what reaches the reader. They are
+# deliberately distinctive strings — the swap is a literal substitution over the finished SVG,
+# so a colour that also occurs incidentally would be rewritten along with the one that means
+# something.
 ACCENT = "#2563eb"
 MUTED = "#98a2b3"
 # The third predictor needs its own colour, not a shade of the model's: a specialist is a
@@ -45,15 +57,33 @@ _SPECIALIST = "#0f9d78"
 _WHO_LINE = "#d97706"
 _INK = "#1c2430"
 _LABEL_INK = "#667085"
-# Rendered above 1× so the figures stay sharp on the displays most readers are on; the page
-# scales them down to its own column width, so this buys resolution rather than size.
-_DPI = 140
+_GRID = "#e3e7ee"
+_AXIS = "#c3c2b7"
+_PAPER = "#ffffff"
+
+# Every colour matplotlib is handed, and the page variable it becomes. Two colours mapping to
+# one variable is intended: the axis rule and the gridlines are the same hairline to the reader,
+# and telling them apart cost a second variable that had no meaning of its own.
+_THEMED = {
+    ACCENT: "var(--accent)",
+    MUTED: "var(--muted)",
+    _SPECIALIST: "var(--specialist)",
+    _WHO_LINE: "var(--warn)",
+    _INK: "var(--ink)",
+    _LABEL_INK: "var(--muted)",
+    _GRID: "var(--line)",
+    _AXIS: "var(--line)",
+    _PAPER: "var(--bg)",
+}
+
 _CHART_STYLE = {
-    "figure.facecolor": "white", "axes.facecolor": "white",
-    "axes.edgecolor": "#c3c2b7", "axes.linewidth": 0.8,
+    # Transparent rather than white: the figure sits on the page background, whichever one the
+    # reader's scheme resolves to, and a painted rectangle underneath would defeat that.
+    "figure.facecolor": "none", "axes.facecolor": "none",
+    "axes.edgecolor": _AXIS, "axes.linewidth": 0.8,
     "axes.spines.top": False, "axes.spines.right": False,
     "axes.grid": True, "axes.grid.axis": "y", "axes.axisbelow": True,
-    "grid.color": "#e3e7ee", "grid.linewidth": 0.9,
+    "grid.color": _GRID, "grid.linewidth": 0.9,
     "axes.titlesize": 13, "axes.titleweight": "bold", "axes.titlecolor": _INK,
     "axes.titlepad": 14, "axes.labelcolor": _LABEL_INK, "axes.labelsize": 10.5,
     "text.color": _INK, "xtick.color": _LABEL_INK, "ytick.color": _LABEL_INK,
@@ -62,12 +92,50 @@ _CHART_STYLE = {
 }
 plt.rcParams.update(_CHART_STYLE)
 
+_SVG_START = re.compile(r"<svg\b")
+_SVG_METADATA = re.compile(r"<metadata>.*?</metadata>\s*", re.DOTALL)
+_SVG_ID = re.compile(r'id="([^"]+)"')
 
-def to_base64(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=_DPI, bbox_inches="tight")
+
+def _namespace_ids(svg: str, prefix: str) -> str:
+    """Make every id in one figure unique to it.
+
+    Three figures are inlined into one document, and matplotlib names its glyph outlines after
+    the font (``DejaVuSans-31``) rather than after the figure. Identical ids across them would
+    leave the browser resolving every ``<use>`` against whichever figure loaded first — which
+    happens to render correctly, since the glyphs *are* identical, and would stop doing so the
+    day a figure used a font or a clip path the first one did not.
+    """
+    for name in sorted(set(_SVG_ID.findall(svg))):
+        svg = svg.replace(f'id="{name}"', f'id="{prefix}-{name}"')
+        svg = svg.replace(f'#{name}"', f'#{prefix}-{name}"')
+        svg = svg.replace(f"url(#{name})", f"url(#{prefix}-{name})")
+    return svg
+
+
+def to_svg(fig, name: str, title: str) -> str:
+    """Render a figure as inline SVG in the page's palette, labelled for a screen reader.
+
+    ``name`` namespaces the figure's ids; ``title`` is what an ``alt`` attribute would have
+    said, carried by a ``<title>`` element because inline SVG has no ``alt``.
+    """
+    buf = io.StringIO()
+    # `Date` omitted deliberately: matplotlib stamps the creation time into the SVG metadata,
+    # which would make two identical figures differ and put a clock inside a pure function.
+    fig.savefig(buf, format="svg", bbox_inches="tight", transparent=True,
+                metadata={"Date": None})
     plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode()
+    svg = buf.getvalue()
+
+    svg = svg[_SVG_START.search(svg).start():]
+    svg = _SVG_METADATA.sub("", svg)
+    svg = _namespace_ids(svg, name)
+    for drawn, themed in _THEMED.items():
+        svg = svg.replace(drawn, themed)
+    svg = _SVG_START.sub('<svg class="chart" role="img"', svg, count=1)
+    # The first `>` closes the opening tag — no attribute value on it contains one — so the
+    # accessible name goes in immediately after, where `<title>` has to be to name the image.
+    return svg.replace(">", f"><title>{title}</title>", 1)
 
 
 def _legend_below(ax, ncol: int) -> None:
@@ -105,7 +173,7 @@ def _who_reference(ax, style: str = "--") -> None:
         xy=(0.0, level), xycoords=("axes fraction", "data"),
         xytext=(7, 4), textcoords="offset points",
         ha="left", va="bottom", fontsize=8.5, color=_WHO_LINE, zorder=6,
-        bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": "none",
+        bbox={"boxstyle": "round,pad=0.2", "facecolor": _PAPER, "edgecolor": "none",
               "alpha": 0.82},
     )
 
@@ -144,7 +212,7 @@ def forecast(forecast_df) -> str:
         # invites the reader to read the decoration as the claim.
         ax.fill_between(x, y, color=ACCENT, alpha=0.07, zorder=1)
     ax.plot(x, y, color=ACCENT, lw=2.2, marker="o", markersize=5,
-            markerfacecolor="white", markeredgecolor=ACCENT, zorder=4)
+            markerfacecolor=_PAPER, markeredgecolor=ACCENT, zorder=4)
     # The page claims the model forecasts 24 hours. Over the earliest leads it does not —
     # the naive rule does — so those points are marked rather than blended into the line.
     source = forecast_df.get("source")
@@ -165,7 +233,7 @@ def forecast(forecast_df) -> str:
     # which.
     _time_axis(ax, mdates.HourLocator(byhour=range(0, 24, 3)))
     _legend_below(ax, ncol=2)
-    return to_base64(fig)
+    return to_svg(fig, "forecast", "Predicted PM2.5 for the next 24 hours")
 
 
 def _band_label(ax, start: float, end: float, text: str, color: str) -> None:
@@ -228,7 +296,7 @@ def lead_curve(
     if drawable:
         ax.set_ylim(min(drawable) * 0.94, max(drawable) * 1.13)
     _legend_below(ax, ncol=3)
-    return to_base64(fig)
+    return to_svg(fig, "lead", "Forecast error against lead time")
 
 
 def backtest(series: dict) -> str | None:
@@ -261,4 +329,4 @@ def backtest(series: dict) -> str | None:
     ax.margins(x=0.01)
     _time_axis(ax, mdates.DayLocator(interval=2))
     _legend_below(ax, ncol=3)
-    return to_base64(fig)
+    return to_svg(fig, "backtest", "Forecast against measured PM2.5 over held-out hours")

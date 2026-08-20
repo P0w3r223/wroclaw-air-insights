@@ -36,6 +36,7 @@ src/wroclaw_air_insights/
                        #      score-log / predict / all
 notebooks/01_analysis.ipynb
 tests/                 # pytest
+docs/methodology.md    # the long form the README points at: every measurement + the nulls
 docs/ideas/            # roadmap: measured results, including the rejected ones
 docs/research/         # data-source research
 .github/workflows/     # ci.yml (tests) + refresh.yml (daily Pages deploy)
@@ -135,14 +136,16 @@ written down:
 - a deploy is confirmed on **fetched HTML**, never on a reload, which can serve a cached page;
 - a phone width needs **CDP device emulation** — Chromium will not create a window under
   ~500 px, so `--window-size=390` renders wide and *crops*, which looks exactly like overflow;
-- `table { width: 100% }` reports the card's width whether there is room to spare or none, so
-  a table is measured at **`width: min-content`**, against **winter** figures rather than
-  today's single-digit summer ones.
+- `table { width: 100% }` reports its container's width whether there is room to spare or
+  none, so a table is measured at **`width: min-content`**, against **winter** figures rather
+  than today's single-digit summer ones.
 
 All three are performed by `.claude/skills/verify-published-page/` — run the skill rather than
-rebuilding the procedure. The lead table declares `data-scroll="by-design"` because seven
-columns cannot fit a phone at a readable size; that is the only table allowed a negative
-margin, and the declaration lives in `horizon_section.py` rather than in the checker.
+rebuilding the procedure. The lead table declares `data-scroll="by-design"`: it is the only
+table allowed a negative margin. Since the sections lost their boxes it does not need the
+allowance — all four tables clear a 390 px phone with winter figures — but its margin is the
+narrowest on the page and moves with content, so the declaration stays. It lives in
+`horizon_section.py` rather than in the checker.
 
 ## Code graph
 
