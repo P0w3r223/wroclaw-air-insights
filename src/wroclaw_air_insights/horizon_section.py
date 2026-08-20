@@ -240,12 +240,17 @@ def render(metadata: dict) -> str:
     naive_elsewhere = baseline.LABELS["persistence"]
     flat = _flatness_caveat(scored, shown)
 
-    # `data-scroll="by-design"` marks the one table on this page that is *meant* to scroll on a
-    # phone: seven columns do not fit 336 px at a readable size, and the alternatives are
-    # dropping a column or type below 12 px. It changes nothing a reader sees; it is there so a
-    # width check can tell this table apart from one that scrolled because it regressed.
+    # `data-scroll="by-design"` marks the one table on this page that is *allowed* to scroll on
+    # a phone. It no longer has to: dropping the boxes around the sections handed the page
+    # column back the card's padding, and at a 390 px viewport with winter figures these seven
+    # columns now clear it by ~40 px. The declaration stays because that margin is the
+    # narrowest on the page and it moves with content — one run where a lead is served by a
+    # "specialist" rather than by the "model" widens the last column — and scrolling one table
+    # is still better than dropping a column or setting type below 12 px. It changes nothing a
+    # reader sees; it is there so a width check can tell this table apart from one that
+    # scrolled because it regressed.
     return f"""  <h2>How far ahead, and what that costs</h2>
-  <img src="data:image/png;base64,{chart}" alt="Forecast error against lead time">
+  <div class="chart-wrap">{chart}</div>
   <p>The main model is trained on one task — predict 24 hours ahead — and the lead time is
   not one of its inputs, so <em>its</em> line is flat: the same error at every hour of the
   chart above. Neither of the other two is. “The air will stay as it is now” is strong

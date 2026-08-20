@@ -35,6 +35,11 @@ tools = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The published page inlines its own stylesheet, so the CSS is source the report module reads
+# at import — an install that dropped it would fail at build time rather than render unstyled.
+[tool.setuptools.package-data]
+wroclaw_air_insights = ["assets/*.css"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
