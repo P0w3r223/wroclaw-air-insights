@@ -100,4 +100,5 @@ python -m wroclaw_air_insights.report                    # build the Pages HTML
 
 ## License
 
-MIT. Air-quality data © GIOŚ; weather data © Open-Meteo / CAMS (CC BY 4.0).
+MIT — see [LICENSE](LICENSE). Air-quality data © GIOŚ; weather data © Open-Meteo / CAMS
+(CC BY 4.0).
