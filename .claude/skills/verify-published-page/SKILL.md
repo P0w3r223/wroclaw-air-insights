@@ -89,6 +89,33 @@ marker: Generated 2026-08-14 08:29 CEST ·   (matches --expect '2026-08-14 08:29
   a comment at the top. They are the only thing that would notice a future edit undoing one:
   none of the four changes a verdict on any of the eleven published pages today.
 
+### The portfolio count, row by row
+
+The `17 / 16` above is the sum of a measurement, so it is recorded as one. Re-run 2026-09-04
+against the live pages with this commit's code; a *wide* table is one whose `min-content` floor
+exceeds the room its card gives it, whatever handles the overflow afterwards.
+
+| page | 375 px | 390 px |
+|---|---|---|
+| `ab-lab` | 2 | 2 |
+| `apply-scout` | 3 | 3 |
+| `auth-log-scan` | 1 | 1 |
+| `car-price-ml` | 1 | 1 |
+| `doc-extract` | 5 | **4** |
+| `it-job-radar` | 0 | 0 |
+| `mini-traceroute` | 1 | 1 |
+| `mlops-car-price` | 2 | 2 |
+| `pl-jobs-lora` | 2 | 2 |
+| `pl-review-sense` | 0 | 0 |
+| `wroclaw-air-insights` (`--winter`) | 0 | 0 |
+| **total** | **17** | **16** |
+
+`doc-extract` is the whole delta: one table sits at `-11 px` at 375 and `+4 px` at 390. A review
+of this change reported the 390 total as 15, from a second drop on `mini-traceroute`; that page's
+only wide table needs 422 px against 350 px of room, so it cannot fit at either width. A bare
+total invites that; the rows are here so the next reader can find the disagreement without a
+browser.
+
 Exit status is 0 when the marker is present, no document scrolls sideways, and every table
 either fits, declares itself, or sits in something that scrolls.
 

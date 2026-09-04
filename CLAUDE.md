@@ -143,7 +143,8 @@ written down:
 All three are performed by `.claude/skills/verify-published-page/` — run the skill rather than
 rebuilding the procedure. The lead table declares `data-scroll="by-design"`: it is the only
 table allowed a negative margin. Since the sections lost their boxes it does not need the
-allowance — all four tables clear a 390 px phone with winter figures — but its margin is the
+allowance — all four tables clear a 375 px phone with winter figures, measured
+2026-09-04 against the live page at a narrowest margin of +25 px — but its margin is the
 narrowest on the page and moves with content, so the declaration stays. It lives in
 `horizon_section.py` rather than in the checker.
 
