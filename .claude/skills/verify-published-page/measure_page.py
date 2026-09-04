@@ -20,7 +20,8 @@ Usage:
     python measure_page.py <url-or-file> [--widths 390,414,768] [--winter] [--expect STAMP]
 
 Exit status is 1 when a check fails: a table that neither fits nor sits in something that
-scrolls it, horizontal overflow on the document, or a build stamp that is missing — or, with ``--expect``, that names a build other
+scrolls it, horizontal overflow on the document, or a build stamp that is
+missing — or, with ``--expect``, that names a build other
 than the one you are waiting for. Without ``--expect`` the stamp check is presence only, which
 every build this project has ever published would pass, so it says the page is *a* page rather
 than *your* page.
@@ -91,24 +92,32 @@ _MEASURE_JS = r"""
       // external stylesheet that nothing had read.
       byDesign: table.dataset.scroll === 'by-design',
       scroller: (() => {
-        // Start at the table, not its parent: at phone widths this repository's own page makes
-        // the table the scroller itself (`table { display: block; overflow-x: auto }` under
-        // `max-width: 640px`), which a walk beginning one level up cannot see.
-        for (let node = table; node; node = node.parentElement) {
+        // A table may be its own scroller, but only where the page *declared* this one. That is
+        // not a nicety: this repository's `max-width: 640px` block sets `overflow-x: auto` on
+        // `table`, so at phone widths every table matches on the first step and no table can ever
+        // report a defect. `CLAUDE.md` reserves a negative margin for the lead table alone, and
+        // `tests/test_report.py` warns in as many words against turning "a real regression on
+        // another table into an accepted one" — which starting unconditionally at the table did.
+        // Siblings are unaffected: on all eleven pages only this one puts `overflow-x` on the
+        // element itself; every other wide table has a wrapper, reached from `parentElement`.
+        const start = table.dataset.scroll === 'by-design' ? table : table.parentElement;
+        for (let node = start; node; node = node.parentElement) {
+          // The bound comes first. A scroller *at* the card carries the card's prose with it just
+          // as one outside it does — the card is what holds the headings and the paragraphs.
+          if (node === card) break;
           const overflow = getComputedStyle(node).overflowX;
           // A clipping box ends the content. Anything scrollable outside it scrolls the clipped
           // box, which is already the width it was given — so the overflow is unreachable, and
           // naming the outer box would report a defect as handled.
           if (overflow === 'hidden' || overflow === 'clip') return null;
-          if (overflow === 'auto' || overflow === 'scroll') {
-            // Declaring `auto` is not the same as having somewhere to scroll to.
-            return node.scrollWidth > node.clientWidth
-              ? (node.classList[0] || node.tagName.toLowerCase())
-              : null;
+          // Declaring `auto` is not the same as having somewhere to scroll to — but a box that
+          // declares it and does not overflow is evidence that *this* box is not the scroller,
+          // not that the table is unreachable. Keep walking; a wider ancestor may be the one.
+          const scrolls = overflow === 'auto' || overflow === 'scroll';
+          if (scrolls && node.scrollWidth > node.clientWidth) {
+            const name = node.classList[0];
+            return name ? '.' + name : '<' + node.tagName.toLowerCase() + '>';
           }
-          // Past the card, a scroller carries the prose with it — which is the defect
-          // `apply-scout`'s own CSS comment records fixing, not a way of handling a table.
-          if (node === card) break;
         }
         return null;
       })(),
@@ -308,7 +317,7 @@ def report(readings: list[dict], marker_ok: bool, marker_text: str, winter: bool
             elif table["byDesign"]:
                 verdict = "scrolls, by design"
             elif table.get("scroller"):
-                verdict = f"scrolls in .{table['scroller']}"
+                verdict = f"scrolls in {table['scroller']}"
             else:
                 verdict = "SCROLLS"
             healthy &= fits or handled

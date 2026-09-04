@@ -29,7 +29,8 @@ here, which is why the measurement is a script instead of a procedure to re-deri
 *some* build is there, which every deploy since the first would pass.
 
 Point it at a path instead of a URL to check a page before it ships. `--widths 390,768` sets
-the viewports (390 px is the phone case that matters); `--browser` names a different Chromium.
+the viewports (375 px is the gate and leads the defaults; 390 is the next real phone up);
+`--browser` names a different Chromium.
 `websocket-client` comes from the `tools` extra: `pip install -e ".[tools]"`.
 
 Reach for `--winter` on any layout claim. Summer errors are single-digit and a table that fits
@@ -68,14 +69,25 @@ marker: Generated 2026-08-14 08:29 CEST ·   (matches --expect '2026-08-14 08:29
   The walk answers a narrower question than "is there a scroller above this table", and each
   narrowing is a false verdict it would otherwise give:
 
-  - it starts at the **table**, because this page's own `max-width: 640px` block makes the table
-    the scroller (`table { display: block; overflow-x: auto }`);
+  - a table counts as its **own** scroller only where the page declared it with
+    `data-scroll="by-design"`. This page's `max-width: 640px` block puts `overflow-x: auto` on
+    every `table`, so a walk that started at the table unconditionally matched on the first step
+    and **no table here could ever report a defect** — `CLAUDE.md` reserves a negative margin for
+    the lead table alone, and `tests/test_report.py` warns against exactly the outcome that
+    produced. Siblings are unaffected: this is the only page in the portfolio that puts
+    `overflow-x` on the element rather than on a wrapper;
   - it stops at a box computing to `overflow-x: hidden` or `clip`, because that box ends the
     content and anything scrollable outside it scrolls the clipped box, not the table;
   - it requires the box it names to have `scrollWidth > clientWidth`, because declaring `auto`
     is not the same as having somewhere to scroll to;
-  - it stops at the card, because a scroller further out carries the surrounding prose with it,
-    which is a defect and not a way of handling a table.
+  - it stops **at** the card, not past it: a scroller *at* the card carries the card's prose just
+    as one outside it does, because the card is what holds the headings and paragraphs;
+  - and a box that declares `auto` but does not overflow only means *that* box is not the
+    scroller, so the walk keeps going rather than giving up on the table.
+
+  Each of the four has a fixture in `fixtures/`, named for the case, with the expected verdict in
+  a comment at the top. They are the only thing that would notice a future edit undoing one:
+  none of the four changes a verdict on any of the eleven published pages today.
 
 Exit status is 0 when the marker is present, no document scrolls sideways, and every table
 either fits, declares itself, or sits in something that scrolls.
@@ -88,7 +100,8 @@ instrument for it. This script answers the two questions that have been got wron
 
 A page claim is settled when the fetched stamp matches the `--expect` you passed, and every
 table that has not declared itself either carries a non-negative margin or sits in something
-that scrolls it, at 390 px with `--winter`.
+that scrolls it, at 375 px with `--winter` — the gate width, and the one at which the count of
+wide tables across the portfolio is 17 rather than 390's 16.
 
 **Pointed at a page that prints no build stamp, the exit status cannot carry the verdict.**
 Ten of the portfolio's eleven published pages print none — they are served byte-identical from

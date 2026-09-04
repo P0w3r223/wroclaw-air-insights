@@ -1,0 +1,4 @@
+<!-- A clipping box between the table and the scroller. The outer box is already the width it
+     was given, so naming it would call an unreachable table handled. Expect: SCROLLS. -->
+<style>section{width:350px}.outer-scroll{overflow-x:auto}.inner-clip{overflow-x:hidden}</style>
+<section><div class="outer-scroll"><div class="inner-clip"><table class="clipped"><thead><tr><th>alpha</th><th>bravo</th><th>charlie</th><th>delta</th><th>echo</th><th>foxtrot</th><th>golf</th><th>hotel</th></tr></thead><tbody><tr><td>1111111</td><td>2222222</td><td>3333333</td><td>4444444</td><td>5555555</td><td>6666666</td><td>7777777</td><td>8888888</td></tr></tbody></table></div></div></section>
