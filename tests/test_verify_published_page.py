@@ -59,11 +59,18 @@ def _load_measure_page():
     The stand-in for `websocket` is only ever reached by `Page.__init__`, which no test in the
     pure layer calls; when the extra is installed the real module wins.
     """
-    if not _HAS_WEBSOCKET:
-        sys.modules.setdefault("websocket", types.ModuleType("websocket"))
+    planted = not _HAS_WEBSOCKET and "websocket" not in sys.modules
+    if planted:
+        sys.modules["websocket"] = types.ModuleType("websocket")
     spec = importlib.util.spec_from_file_location("measure_page", _SKILL / "measure_page.py")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        # Left in `sys.modules`, an attribute-less stand-in turns a later `import websocket`
+        # into an AttributeError raised far from its cause.
+        if planted:
+            sys.modules.pop("websocket", None)
     return module
 
 
@@ -121,6 +128,13 @@ def _expected_verdicts(html: str) -> dict[int, str]:
 _PRINTED = re.compile(r"\([-+]\d+ px, (.*)\)$")
 
 
+def _printed_clause(line: str) -> str:
+    """The verdict clause of one printed table line."""
+    printed = _PRINTED.search(line)
+    assert printed, f"report() changed its line format: {line!r}"
+    return printed.group(1)
+
+
 def _printed_verdict(margin: int, by_design: bool, scroller: str | None) -> str:
     """What `report()` prints for one table in that state — asked of `report()`, not restated."""
     reading = {
@@ -142,9 +156,18 @@ def _printed_verdict(margin: int, by_design: bool, scroller: str | None) -> str:
     buffer = io.StringIO()
     with redirect_stdout(buffer):
         measure_page.report([reading], True, "stamp", False)
-    printed = _PRINTED.search(buffer.getvalue().splitlines()[-1])
-    assert printed, "report() changed its line format"
-    return printed.group(1)
+    return _printed_clause(buffer.getvalue().splitlines()[-1])
+
+
+def test_a_declared_table_is_named_by_its_declaration_not_by_its_scroller():
+    """`byDesign` outranks `scroller` in `report()`, which is what the fixtures' comments claim.
+
+    Without this, the precedence lives only in the browser layer — skipped wherever no Chromium
+    is installed, CI included. Swapping the two branches leaves every other assertion here green
+    and changes only what the declared table is *called*, which is the shape of the defect this
+    file was written after: a comment asserting a verdict the tool cannot print.
+    """
+    assert _printed_verdict(-26, by_design=True, scroller=".probe") == "scrolls, by design"
 
 
 def _reachable(verdict: str, by_design: bool) -> bool:
@@ -213,17 +236,32 @@ def test_expected_verdicts_are_ones_report_can_print(fixture: Path):
 # --- the browser layer: the walk itself ---------------------------------------
 
 
+def _wanted_browser() -> str:
+    """The binary this layer will try, which is not always the default one.
+
+    `os.environ.get(name, default)` returns "" for a variable that is set and empty, and
+    `Path("").exists()` is True — so an empty override would pass the check here and fail
+    deep inside `_start_browser`. `or` collapses both cases onto the default.
+    """
+    return os.environ.get("VERIFY_PAGE_BROWSER") or measure_page.DEFAULT_BROWSER
+
+
 def _browser() -> str | None:
-    binary = os.environ.get("VERIFY_PAGE_BROWSER", measure_page.DEFAULT_BROWSER)
-    return binary if Path(binary).exists() else None
+    binary = _wanted_browser()
+    return binary if Path(binary).is_file() else None
 
 
 def _why_not_measurable() -> str:
-    """The reason this layer cannot run here, or an empty string when it can."""
+    """The reason this layer cannot run here, or an empty string when it can.
+
+    This string is the whole safety of a skipped layer: it is what a reader has instead of a
+    result. So it names the binary that was actually looked for — reporting the default while
+    honouring an override tells you to set a variable you have already set.
+    """
     if not _HAS_WEBSOCKET:
         return "websocket-client is absent — it ships in the `tools` extra: pip install -e '.[tools]'"
     if _browser() is None:
-        return f"no Chromium at {measure_page.DEFAULT_BROWSER} — set VERIFY_PAGE_BROWSER"
+        return f"no Chromium at {_wanted_browser()} — set VERIFY_PAGE_BROWSER"
     return ""
 
 
@@ -246,7 +284,7 @@ def test_the_walk_returns_the_verdict_the_fixture_expects(fixture: Path):
     measured = {
         int(index): verdict
         for index, verdict in (
-            (line.split()[1], _PRINTED.search(line).group(1))
+            (line.split()[1], _printed_clause(line))
             for line in buffer.getvalue().splitlines()
             if line.strip().startswith("table ")
         )
