@@ -19,8 +19,8 @@ Usage:
 
     python measure_page.py <url-or-file> [--widths 390,414,768] [--winter] [--expect STAMP]
 
-Exit status is 1 when a check fails: a table that does not fit, horizontal overflow on the
-document, or a build stamp that is missing — or, with ``--expect``, that names a build other
+Exit status is 1 when a check fails: a table that neither fits nor sits in something that
+scrolls it, horizontal overflow on the document, or a build stamp that is missing — or, with ``--expect``, that names a build other
 than the one you are waiting for. Without ``--expect`` the stamp check is presence only, which
 every build this project has ever published would pass, so it says the page is *a* page rather
 than *your* page.
@@ -46,7 +46,11 @@ import websocket
 
 # Windows installs Edge here; a different Chromium is fine and is passed with --browser.
 DEFAULT_BROWSER = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-DEFAULT_WIDTHS = (390, 414, 768, 1200)
+#: 375 leads because it is the width the portfolio's review states as its gate (iPhone SE);
+#: 390 is the next real phone up and was the original default. A count of wide tables is not
+#: the same at both — over the eleven published pages it is 17 at 375 and 16 at 390 — so a
+#: claim about table fit that does not name its width is not a measurement.
+DEFAULT_WIDTHS = (375, 390, 414, 768, 1200)
 VIEWPORT_HEIGHT = 844
 
 # The build stamp the report footer renders. Asserting on it is what distinguishes "the deploy
@@ -87,10 +91,24 @@ _MEASURE_JS = r"""
       // external stylesheet that nothing had read.
       byDesign: table.dataset.scroll === 'by-design',
       scroller: (() => {
-        for (let node = table.parentElement; node; node = node.parentElement) {
+        // Start at the table, not its parent: at phone widths this repository's own page makes
+        // the table the scroller itself (`table { display: block; overflow-x: auto }` under
+        // `max-width: 640px`), which a walk beginning one level up cannot see.
+        for (let node = table; node; node = node.parentElement) {
           const overflow = getComputedStyle(node).overflowX;
-          if (overflow === 'auto' || overflow === 'scroll') return node.className || node.tagName;
-          if (node === document.body) break;
+          // A clipping box ends the content. Anything scrollable outside it scrolls the clipped
+          // box, which is already the width it was given — so the overflow is unreachable, and
+          // naming the outer box would report a defect as handled.
+          if (overflow === 'hidden' || overflow === 'clip') return null;
+          if (overflow === 'auto' || overflow === 'scroll') {
+            // Declaring `auto` is not the same as having somewhere to scroll to.
+            return node.scrollWidth > node.clientWidth
+              ? (node.classList[0] || node.tagName.toLowerCase())
+              : null;
+          }
+          // Past the card, a scroller carries the prose with it — which is the defect
+          // `apply-scout`'s own CSS comment records fixing, not a way of handling a table.
+          if (node === card) break;
         }
         return null;
       })(),
