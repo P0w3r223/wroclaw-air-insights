@@ -85,9 +85,20 @@ marker: Generated 2026-08-14 08:29 CEST ·   (matches --expect '2026-08-14 08:29
   - and a box that declares `auto` but does not overflow only means *that* box is not the
     scroller, so the walk keeps going rather than giving up on the table.
 
-  Each of the four has a fixture in `fixtures/`, named for the case, with the expected verdict in
-  a comment at the top. They are the only thing that would notice a future edit undoing one:
-  none of the four changes a verdict on any of the eleven published pages today.
+  Four fixtures in `fixtures/` cover those five narrowings, each with its expected verdict in a
+  comment at the top: `self-scrolling-table.html` for the first, `clipped.html` for the second,
+  `scroller-outside-card.html` for the fourth, and `scroller-with-nothing-to-scroll.html` for the
+  third and the fifth at once — it can only name `.outer` if `.inner` is rejected for having
+  nothing to scroll *and* the walk carries on instead of giving up there.
+
+  `tests/test_verify_published_page.py` executes them. It reads the verdict out of each comment
+  rather than restating it, measures the fixture through `measure()` and compares; reverting any
+  one of the five turns a verdict there. That layer needs Chromium and the `tools` extra, so CI
+  — which provisions neither — skips it and checks only the part that needs no browser: that
+  every expected verdict is one `report()` can print for a table declared that way. Run
+  `pytest tests/test_verify_published_page.py` locally before trusting a change to the walk; a
+  skipped test is not a green one. None of the five changes a verdict on any of the eleven
+  published pages today.
 
 ### The portfolio count, row by row
 

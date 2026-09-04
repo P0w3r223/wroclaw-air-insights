@@ -169,12 +169,20 @@ def _fixture_id(path: Path) -> str:
 
 
 def test_the_skill_ships_the_fixtures_the_walk_is_pinned_by():
-    assert [p.name for p in _FIXTURES] == [
+    """Four fixtures for five narrowings — `scroller-with-nothing-to-scroll` pins two.
+
+    SKILL.md names each one, so a fixture added, renamed or dropped without the prose catching
+    up fails here rather than leaving the document describing a guard that is not there.
+    """
+    names = [path.name for path in _FIXTURES]
+    assert names == [
         "clipped.html",
         "scroller-outside-card.html",
         "scroller-with-nothing-to-scroll.html",
         "self-scrolling-table.html",
     ]
+    skill = (_SKILL / "SKILL.md").read_text(encoding="utf-8")
+    assert [name for name in names if name not in skill] == []
 
 
 @pytest.mark.parametrize("fixture", _FIXTURES, ids=_fixture_id)
