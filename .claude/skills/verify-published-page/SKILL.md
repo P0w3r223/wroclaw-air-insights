@@ -93,10 +93,15 @@ marker: Generated 2026-08-14 08:29 CEST ·   (matches --expect '2026-08-14 08:29
 
   `tests/test_verify_published_page.py` executes them. It reads the verdict out of each comment
   rather than restating it, measures the fixture through `measure()` and compares; reverting any
-  one of the five turns a verdict there. That layer needs Chromium and the `tools` extra, so CI
-  — which **installs** neither, though `ubuntu-latest` ships a Chrome the
-  workflow could point `VERIFY_PAGE_BROWSER` at — skips it and checks only the part that needs no browser: that
-  every expected verdict is one `report()` can print for a table declared that way. Run
+  one of the five turns a verdict there. That layer needs Chromium and the `tools` extra, and
+  **CI installs both** — it points `VERIFY_PAGE_BROWSER` at the Chrome `ubuntu-latest` ships and
+  fails the step if the image ever stops shipping one, because a fallback to *no browser* is the
+  silent skip this arrangement exists to end. `pytest -rs` there names anything that skipped, so
+  the layer cannot quietly stop being a gate.
+
+  The browser-free half runs everywhere regardless: every expected verdict must be one `report()`
+  can print for a table declared that way, and `byDesign` must outrank `scroller` — the precedence
+  the comments' own expectations rest on. Without Chromium the walk tests skip, so run
   `pytest tests/test_verify_published_page.py` locally before trusting a change to the walk; a
   skipped test is not a green one. None of the five changes a verdict on any of the eleven
   published pages today.
