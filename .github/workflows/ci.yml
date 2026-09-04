@@ -24,6 +24,18 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pytest
+          pip install -e ".[tools]" pytest
+      # The fixture gate for `verify-published-page` measures a real engine, so without a
+      # browser its four walk tests skip and the narrowings they pin stop being checked --
+      # silently, since a skip is green. `ubuntu-latest` ships Chrome, so pointing the tests
+      # at it costs nothing and turns four skips into gates. Resolved in a step that fails
+      # rather than falling back: a fallback to "no browser" is the skip this exists to end.
+      - name: Point the page measurement at the runner's Chrome
+        run: |
+          binary="$(command -v google-chrome || command -v chromium-browser || true)"
+          test -n "$binary" || { echo "no Chrome on this image"; exit 1; }
+          echo "VERIFY_PAGE_BROWSER=$binary" >> "$GITHUB_ENV"
+      # `-rs` names anything that skipped. The walk layer is only a gate while nothing
+      # quietly removes it, and the run log is where that would show.
       - name: Run tests
-        run: pytest
+        run: pytest -rs

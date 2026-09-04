@@ -1,0 +1,7 @@
+<!-- A scroller outside the card absorbs the overflow and drags the prose sideways with the
+     table. That is the defect apply-scout records fixing, not a way of handling one. Expect: SCROLLS.
+     `.page` is pinned to the card's width so that it genuinely overflows. Left as wide as the
+     window it has nothing to scroll to, the scrollWidth rule rejects it for that instead, and
+     the fixture reads SCROLLS whether the walk stops at the card or not. -->
+<style>.page{overflow-x:auto;width:350px}section{width:350px}</style>
+<div class="page"><section><table class="drags"><thead><tr><th>alpha</th><th>bravo</th><th>charlie</th><th>delta</th><th>echo</th><th>foxtrot</th><th>golf</th><th>hotel</th></tr></thead><tbody><tr><td>1111111</td><td>2222222</td><td>3333333</td><td>4444444</td><td>5555555</td><td>6666666</td><td>7777777</td><td>8888888</td></tr></tbody></table><p>prose that must not move</p></section></div>

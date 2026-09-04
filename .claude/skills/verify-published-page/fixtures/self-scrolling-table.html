@@ -1,0 +1,6 @@
+<!-- This page makes every table its own scroller under max-width:640px, so an undeclared
+     table matching on the first step would make the phone check unfalsifiable. Only the declared
+     table may be its own scroller. Expect: table 0 SCROLLS, table 1 scrolls, by design.
+     `report()` tests `byDesign` before `scroller`, so a declared table never prints "scrolls in". -->
+<style>section{width:350px}table{display:block;overflow-x:auto}</style>
+<section><table class="undeclared"><thead><tr><th>alpha</th><th>bravo</th><th>charlie</th><th>delta</th><th>echo</th><th>foxtrot</th><th>golf</th><th>hotel</th></tr></thead><tbody><tr><td>1111111</td><td>2222222</td><td>3333333</td><td>4444444</td><td>5555555</td><td>6666666</td><td>7777777</td><td>8888888</td></tr></tbody></table> <table class="declared" data-scroll="by-design"><thead><tr><th>alpha</th><th>bravo</th><th>charlie</th><th>delta</th><th>echo</th><th>foxtrot</th><th>golf</th><th>hotel</th></tr></thead><tbody><tr><td>1111111</td><td>2222222</td><td>3333333</td><td>4444444</td><td>5555555</td><td>6666666</td><td>7777777</td><td>8888888</td></tr></tbody></table></section>

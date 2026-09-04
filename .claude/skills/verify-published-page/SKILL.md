@@ -29,7 +29,8 @@ here, which is why the measurement is a script instead of a procedure to re-deri
 *some* build is there, which every deploy since the first would pass.
 
 Point it at a path instead of a URL to check a page before it ships. `--widths 390,768` sets
-the viewports (390 px is the phone case that matters); `--browser` names a different Chromium.
+the viewports (375 px is the gate and leads the defaults; 390 is the next real phone up);
+`--browser` names a different Chromium.
 `websocket-client` comes from the `tools` extra: `pip install -e ".[tools]"`.
 
 Reach for `--winter` on any layout claim. Summer errors are single-digit and a table that fits
@@ -55,9 +56,85 @@ marker: Generated 2026-08-14 08:29 CEST ·   (matches --expect '2026-08-14 08:29
 - **scrolls, by design** is the lead table declaring itself with `data-scroll="by-design"` in
   `horizon_section.py`: seven columns do not fit a phone at a readable size, and that decision
   lives in the page rather than in a list of exceptions here.
+- **scrolls in .<class>** is a table the page did not declare but *did* handle — some ancestor
+  computes to `overflow-x: auto` or `scroll`, and the class named is that ancestor's. This is how
+  every sibling page in the portfolio solves the same problem, and none of them sets the
+  attribute. Judged on the attribute alone they all read as defects: pointed at the eleven
+  published pages **at 375 px**, this tool called seventeen wide tables `SCROLLS` and every one
+  of them was already inside a scroller. (At 390 px it is sixteen — a count of wide tables that
+  does not name its width is not a measurement, which is why 375 now leads `DEFAULT_WIDTHS`.)
+  One page had been recorded as having no scroll handling for three sessions, because the rule
+  providing it lived in an external stylesheet and every check had read the HTML only.
+
+  The walk answers a narrower question than "is there a scroller above this table", and each
+  narrowing is a false verdict it would otherwise give:
+
+  - a table counts as its **own** scroller only where the page declared it with
+    `data-scroll="by-design"`. This page's `max-width: 640px` block puts `overflow-x: auto` on
+    every `table`, so a walk that started at the table unconditionally matched on the first step
+    and **no table here could ever report a defect** — `CLAUDE.md` reserves a negative margin for
+    the lead table alone, and `tests/test_report.py` warns against exactly the outcome that
+    produced. Siblings are unaffected: this is the only page in the portfolio that puts
+    `overflow-x` on the element rather than on a wrapper;
+  - it stops at a box computing to `overflow-x: hidden` or `clip`, because that box ends the
+    content and anything scrollable outside it scrolls the clipped box, not the table;
+  - it requires the box it names to have `scrollWidth > clientWidth`, because declaring `auto`
+    is not the same as having somewhere to scroll to;
+  - it stops **at** the card, not past it: a scroller *at* the card carries the card's prose just
+    as one outside it does, because the card is what holds the headings and paragraphs;
+  - and a box that declares `auto` but does not overflow only means *that* box is not the
+    scroller, so the walk keeps going rather than giving up on the table.
+
+  Four fixtures in `fixtures/` cover those five narrowings, each with its expected verdict in a
+  comment at the top: `self-scrolling-table.html` for the first, `clipped.html` for the second,
+  `scroller-outside-card.html` for the fourth, and `scroller-with-nothing-to-scroll.html` for the
+  third and the fifth at once — it can only name `.outer` if `.inner` is rejected for having
+  nothing to scroll *and* the walk carries on instead of giving up there.
+
+  `tests/test_verify_published_page.py` executes them. It reads the verdict out of each comment
+  rather than restating it, measures the fixture through `measure()` and compares; reverting any
+  one of the five turns a verdict there. That layer needs Chromium and the `tools` extra, and
+  **CI installs both** — it points `VERIFY_PAGE_BROWSER` at the Chrome `ubuntu-latest` ships and
+  fails the step if the image ever stops shipping one, because a fallback to *no browser* is the
+  silent skip this arrangement exists to end. `pytest -rs` there names anything that skipped, so
+  the layer cannot quietly stop being a gate.
+
+  The browser-free half runs everywhere regardless: every expected verdict must be one `report()`
+  can print for a table declared that way, and `byDesign` must outrank `scroller` — the precedence
+  the comments' own expectations rest on. Without Chromium the walk tests skip, so run
+  `pytest tests/test_verify_published_page.py` locally before trusting a change to the walk; a
+  skipped test is not a green one. None of the five changes a verdict on any of the eleven
+  published pages today.
+
+### The portfolio count, row by row
+
+The `17 / 16` above is the sum of a measurement, so it is recorded as one. Re-run 2026-09-04
+against the live pages with this commit's code; a *wide* table is one whose `min-content` floor
+exceeds the room its card gives it, whatever handles the overflow afterwards.
+
+| page | 375 px | 390 px |
+|---|---|---|
+| `ab-lab` | 2 | 2 |
+| `apply-scout` | 3 | 3 |
+| `auth-log-scan` | 1 | 1 |
+| `car-price-ml` | 1 | 1 |
+| `doc-extract` | 5 | **4** |
+| `it-job-radar` | 0 | 0 |
+| `mini-traceroute` | 1 | 1 |
+| `mlops-car-price` | 2 | 2 |
+| `pl-jobs-lora` | 2 | 2 |
+| `pl-review-sense` | 0 | 0 |
+| `wroclaw-air-insights` (`--winter`) | 0 | 0 |
+| **total** | **17** | **16** |
+
+`doc-extract` is the whole delta: one table sits at `-11 px` at 375 and `+4 px` at 390. A review
+of this change reported the 390 total as 15, from a second drop on `mini-traceroute`; that page's
+only wide table needs 422 px against 350 px of room, so it cannot fit at either width. A bare
+total invites that; the rows are here so the next reader can find the disagreement without a
+browser.
 
 Exit status is 0 when the marker is present, no document scrolls sideways, and every table
-that has not declared itself fits.
+either fits, declares itself, or sits in something that scrolls.
 
 ## What it does not answer
 
@@ -66,4 +143,14 @@ section earns its space. That is a judgement made by looking, and a screenshot i
 instrument for it. This script answers the two questions that have been got wrong by looking.
 
 A page claim is settled when the fetched stamp matches the `--expect` you passed, and every
-table that has not declared itself carries a non-negative margin at 390 px with `--winter`.
+table that has not declared itself either carries a non-negative margin or sits in something
+that scrolls it, at 375 px with `--winter` — the gate width, and the one at which the count of
+wide tables across the portfolio is 17 rather than 390's 16.
+
+**Pointed at a page that prints no build stamp, the exit status cannot carry the verdict.**
+Ten of the portfolio's eleven published pages print none — they are served byte-identical from
+a committed `docs/index.html`, so the freshness question is answered by hashing the fetched
+bytes against that file, not by a marker. Those runs exit 1 on the stamp alone, whatever their
+tables did, so read the table lines. This repository is the exception and the reason the marker
+exists: CI rebuilds its page daily, so the committed copy is deliberately stale and the stamp is
+the only handle there is.

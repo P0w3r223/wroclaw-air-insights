@@ -1,0 +1,8 @@
+<!-- A clipping box between the table and the scroller. What the outer box scrolls to is the
+     wide sibling, never the table — the clip box truncated that at the card's width, so naming
+     the outer box would call an unreachable table handled. Expect: SCROLLS.
+     The sibling is what makes this a test: without it the outer box has nothing to scroll to
+     either, the walk returns null for two reasons at once, and dropping the clip rule leaves
+     the verdict unchanged. -->
+<style>section{width:350px}.outer-scroll{overflow-x:auto}.inner-clip{overflow-x:hidden}.aside{width:900px}</style>
+<section><div class="outer-scroll"><div class="inner-clip"><table class="clipped"><thead><tr><th>alpha</th><th>bravo</th><th>charlie</th><th>delta</th><th>echo</th><th>foxtrot</th><th>golf</th><th>hotel</th></tr></thead><tbody><tr><td>1111111</td><td>2222222</td><td>3333333</td><td>4444444</td><td>5555555</td><td>6666666</td><td>7777777</td><td>8888888</td></tr></tbody></table></div><div class="aside">a sibling wide enough to give the outer box somewhere to scroll</div></div></section>

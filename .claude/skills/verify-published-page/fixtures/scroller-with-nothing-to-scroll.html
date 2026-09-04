@@ -1,0 +1,4 @@
+<!-- A box declaring overflow-x:auto that has nothing to scroll is not the scroller; the walk
+     must keep going rather than give up. The real scroller is .outer. Expect: scrolls in .outer. -->
+<style>section{width:350px}.outer{overflow-x:auto}.inner{overflow-x:auto;width:900px}</style>
+<section><div class="outer"><div class="inner"><table class="passthrough"><thead><tr><th>alpha</th><th>bravo</th><th>charlie</th><th>delta</th><th>echo</th><th>foxtrot</th><th>golf</th><th>hotel</th></tr></thead><tbody><tr><td>1111111</td><td>2222222</td><td>3333333</td><td>4444444</td><td>5555555</td><td>6666666</td><td>7777777</td><td>8888888</td></tr></tbody></table></div></div></section>
