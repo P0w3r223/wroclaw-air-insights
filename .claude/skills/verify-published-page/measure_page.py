@@ -73,9 +73,27 @@ _MEASURE_JS = r"""
       needs,
       room,
       margin: room - needs,
-      // The page declares which of its tables is meant to scroll, so this check does not
-      // have to carry a list of exceptions that would drift from it.
+      // Two ways a table may legitimately be wider than its room, and the second is why this
+      // is not just the data attribute it started as.
+      //
+      // `data-scroll="by-design"` is the page *declaring* the intent, which keeps this check
+      // from carrying a list of exceptions that would drift from the page.
+      //
+      // A scrolling ancestor is the page *doing* it. Only this repository sets the attribute;
+      // every sibling wraps its wide tables in a box with `overflow-x: auto` and says nothing.
+      // Judged on the attribute alone, each of those reads as a defect - which is exactly what
+      // happened when this tool was first pointed at them, and one page was recorded as having
+      // no scroll handling for three sessions because the rule providing it lived in an
+      // external stylesheet that nothing had read.
       byDesign: table.dataset.scroll === 'by-design',
+      scroller: (() => {
+        for (let node = table.parentElement; node; node = node.parentElement) {
+          const overflow = getComputedStyle(node).overflowX;
+          if (overflow === 'auto' || overflow === 'scroll') return node.className || node.tagName;
+          if (node === document.body) break;
+        }
+        return null;
+      })(),
     };
   });
   const root = document.documentElement;
@@ -266,10 +284,16 @@ def report(readings: list[dict], marker_ok: bool, marker_text: str, winter: bool
         print(f"\n{label}: document {state}")
         for table in reading["tables"]:
             fits = table["margin"] >= 0
-            verdict = "fits" if fits else (
-                "scrolls, by design" if table["byDesign"] else "SCROLLS"
-            )
-            healthy &= fits or table["byDesign"]
+            handled = table["byDesign"] or bool(table.get("scroller"))
+            if fits:
+                verdict = "fits"
+            elif table["byDesign"]:
+                verdict = "scrolls, by design"
+            elif table.get("scroller"):
+                verdict = f"scrolls in .{table['scroller']}"
+            else:
+                verdict = "SCROLLS"
+            healthy &= fits or handled
             print(
                 f"  table {table['index']} .{table['klass']:<18} "
                 f"needs {table['needs']:>4} / room {table['room']:>4} "

@@ -55,9 +55,17 @@ marker: Generated 2026-08-14 08:29 CEST ·   (matches --expect '2026-08-14 08:29
 - **scrolls, by design** is the lead table declaring itself with `data-scroll="by-design"` in
   `horizon_section.py`: seven columns do not fit a phone at a readable size, and that decision
   lives in the page rather than in a list of exceptions here.
+- **scrolls in .<class>** is a table the page did not declare but *did* handle — some ancestor
+  computes to `overflow-x: auto` or `scroll`, and the class named is that ancestor's. This is how
+  every sibling page in the portfolio solves the same problem, and none of them sets the
+  attribute. Judged on the attribute alone they all read as defects: pointed at the eleven
+  published pages, this tool called seventeen wide tables `SCROLLS` and every one of them was
+  already inside a scroller. One page had been recorded as having no scroll handling for three
+  sessions, because the rule providing it lived in an external stylesheet and every check had
+  read the HTML only.
 
 Exit status is 0 when the marker is present, no document scrolls sideways, and every table
-that has not declared itself fits.
+either fits, declares itself, or sits in something that scrolls.
 
 ## What it does not answer
 
