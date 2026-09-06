@@ -69,10 +69,10 @@ _THEMED = {
     MUTED: "var(--muted)",
     _SPECIALIST: "var(--specialist)",
     _WHO_LINE: "var(--warn)",
-    _INK: "var(--ink)",
+    _INK: "var(--text)",
     _LABEL_INK: "var(--muted)",
-    _GRID: "var(--line)",
-    _AXIS: "var(--line)",
+    _GRID: "var(--border)",
+    _AXIS: "var(--border)",
     _PAPER: "var(--bg)",
 }
 
