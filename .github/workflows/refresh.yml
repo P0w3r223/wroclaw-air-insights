@@ -2,11 +2,17 @@ name: Refresh forecast
 
 # Daily: pull fresh data, retrain, regenerate the report, publish to GitHub Pages.
 #
-# The schedule is best-effort and GitHub says so. Measured over the 22 scheduled runs to
-# 2026-09-06: until 2026-08-26 they started 05:33-05:43Z, and from 2026-08-27 they started
-# 09:16-17:17Z — four to twelve hours late. `ab-lab`'s unrelated Monday cron degraded on the
-# same date, so the cause is the platform's queue rather than anything here, and neither the
-# cron expression nor this comment can promise an hour.
+# The schedule is best-effort and GitHub says so. Measured over all 51 scheduled runs, 2026-07-18
+# to 2026-09-06, as minutes after the 05:00Z the cron asks for:
+#
+#     2026-07-18 .. 08-06   n=20   123-218 min
+#     2026-08-07 .. 08-14   n= 8    47- 81 min
+#     2026-08-15 .. 08-26   n=12    31- 43 min
+#     2026-08-27 .. 09-06   n=11   235-737 min
+#
+# The delay has never been under half an hour and has swung by a factor of twenty, so neither
+# the cron expression nor this comment can promise an hour — which is the whole point of
+# writing the range down instead of a time.
 on:
   schedule:
     - cron: "0 5 * * *"   # 05:00 UTC, honoured when the queue allows — see above
