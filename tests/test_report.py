@@ -1471,46 +1471,69 @@ def test_the_card_description_quotes_no_measurement_from_the_run_that_built_it()
     A card description is standing text by definition: whoever renders the card caches it,
     long after the run that emitted it.
 
-    **What this can decide, and what it deliberately cannot.** A first draft banned every
-    digit and went red on the shipped `description`, which says *"24-hour"* and *"PM2.5"* —
-    a horizon and a pollutant, neither of them a measurement. That assertion claimed a defect
-    the page does not have, which is the mirror of missing one. So the check is against the
-    **values this run measured**: an error, a baseline's error, a sample size. Whether a
-    number is a measurement or a name is not a question this file can answer in general, and
-    `0007` §7 is about exactly that class.
+    **This reads numbers out of the description; it does not enumerate formats.** Three
+    earlier drafts each enumerated something, and each was wrong about a page that was
+    conforming or silent about one that was not:
 
-    *A second draft then matched those values as bare substrings, so `4` — a standard
-    deviation — hit the `24` of "24-hour". Both drafts failed the same way: confident about a
-    page that was conforming. The bound is what makes the third one a measurement.*
+    1. *ban every digit* — red on the shipped `description`, which says "24-hour" and
+       "PM2.5": a horizon and a pollutant, neither of them a measurement.
+    2. *match the run's values as bare substrings* — a standard deviation of `4` hit the
+       `24` of "24-hour".
+    3. *match `f"{v:g}"` and `formatting.fmt(v)`, bounded* — narrower than this docstring,
+       which claims to decide whether a number **this run produced** is quoted. The premise
+       under it, *"every metric on this page is rendered through `formatting.fmt`"*, is
+       refuted by `report.py` in this repository: `_stat_tiles` writes `f"{n_test:,}"` and
+       `f"{peak:.1f}"`, and `glossary_section` writes `f"{test_mean:.1f}"`. So `14.3`,
+       `1,752` and `3.4` — the shapes a reader copying the page's own sentence would carry
+       across — all passed.
 
-    *And the third draft was **narrower than its own docstring**, which is the opposite
-    failure and the one that matters more. It compared against `f"{value:g}"` alone, while
-    every metric on this page is rendered through `formatting.fmt` — the MAE reads `3.00`,
-    not `3`, and the bound then refused to match inside it. So the single likeliest way a
-    figure reaches this description — someone lifting the page's own sentence — was the one
-    shape that passed. Both renderings are checked now. Found by review.*
+    *Enumerating the formatter module rather than the page's rendering sites is the same
+    mistake as enumerating one formatter: a list that has to be kept in step with code it
+    does not import.* Parsing the number closes it, because a format nobody has written yet
+    still produces a number.
+
+    What it still cannot decide: a figure spelled in words, or one derived from a
+    measurement rather than equal to it. `0007` §7 is that class and this does not pretend
+    to it.
     """
     metadata = _fresh_metadata()
     html = _page(metadata)
     measured = {metadata["model"]["mae"], metadata["model"]["rmse"],
                 metadata["baseline_persistence"]["mae"], metadata["n_train"],
                 metadata["n_test"], metadata["test_mean_pm25"]}
+
     for key in ("description", "og:description"):
         match = re.search(rf'<meta[^>]+(?:name|property)="{key}"[^>]+content="([^"]*)"', html)
         assert match, f"no {key} to check"
         content = match.group(1)
-        for value in measured:
-            for rendered in {f"{value:g}", formatting.fmt(value)}:
-                # Bounded on both sides, because a bare `"4" in content` matches the `24`
-                # of "24-hour" — the same overreach as the digit ban, one level down. The
-                # right-hand bound rejects a *continuing number*, not punctuation: a first
-                # attempt wrote `(?![\d.])`, which also rejected the full stop ending the
-                # sentence, so `its error of 3.00.` — the exact shape a copy from the page
-                # produces — slipped through the guard written to catch it.
-                bounded = re.compile(
-                    rf"(?<![\d.]){re.escape(rendered)}(?!\d)(?!\.\d)")
-                assert not bounded.search(content), (
-                    f"{key} quotes {rendered}, which this run measured. A cached card "
-                    "description outlives the run, so a figure in one is a claim a later run "
-                    "can contradict — which is what `_ABOUT` refuses for the page body."
+        for quoted in _numbers_in(content):
+            for value in measured:
+                assert not _is_the_same_figure(quoted, value), (
+                    f"{key} quotes {quoted:g}, which is {value:g} as this page renders it. "
+                    "A cached card description outlives the run, so a figure in one is a "
+                    "claim a later run can contradict — which is what `_ABOUT` refuses for "
+                    "the page body."
                 )
+
+
+#: A number in running prose, with optional thousands grouping. **Not preceded by a letter**,
+#: which is what keeps `PM2.5` out: its `2.5` follows an `M` and is part of a name, not a
+#: measurement. A leading digit still counts, so "24-hour" yields 24 and is then compared on
+#: value rather than excluded by spelling.
+_NUMBER = re.compile(r"(?<![A-Za-z\d.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
+
+
+def _numbers_in(text: str) -> list[float]:
+    out = []
+    for whole, frac in _NUMBER.findall(text):
+        out.append(float(whole.replace(",", "") + ("." + frac if frac else "")))
+    return out
+
+
+def _is_the_same_figure(quoted: float, value: float) -> bool:
+    """Whether `quoted` is `value` as some rendering on this page would write it.
+
+    Compared at the precisions the page actually uses — whole, one place, two — rather than
+    against the format strings that produce them, so a fourth format needs no edit here.
+    """
+    return any(round(value, places) == quoted for places in (0, 1, 2)) or value == quoted
