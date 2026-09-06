@@ -53,6 +53,11 @@ _STYLESHEET = (
 # Named once and used by both the opening paragraph and the footer, so the two cannot drift.
 _REPO_URL = "https://github.com/P0w3r223/wroclaw-air-insights"
 
+# `0007` §5 clause 6 — the one link back to the profile, whose README is the index. `0003` §7
+# settled hub-and-spoke over a mesh: one target, one string per repository, so cutting a
+# project changes that README and no page. Named here for the same reason `_REPO_URL` is.
+_PROFILE_URL = "https://github.com/P0w3r223"
+
 # What this page is, before the first chart. A reader arriving from a CV has no way to tell a
 # live artefact from a screenshot of one, and the answer is the interesting part: everything
 # below is rebuilt by the same daily run that produced the forecast.
@@ -399,6 +404,12 @@ def _render_page(
 GIOŚ measurements and Open-Meteo weather, with the error and the checks behind it.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Wrocław Air Insights — live PM2.5 forecast">
+<!-- Figure-free, like every standing sentence on this page: a number here is one a later run
+     could contradict, which is the failure mode this project keeps re-learning. It says what
+     `description` does not — why the page can be trusted, rather than what it holds. -->
+<meta property="og:description" content="The model it selected, the error it measured and the
+hours each predictor earned are recomputed by the same daily run that produced the forecast —
+including the checks that decide what may be published at all.">
 <meta property="og:url" content="https://p0w3r223.github.io/wroclaw-air-insights/">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#127788;</text></svg>">
@@ -428,6 +439,7 @@ GIOŚ measurements and Open-Meteo weather, with the error and the checks behind 
 <footer>
   Generated {generated} ·
   <a href="{_REPO_URL}">source on GitHub</a> ·
+  <a href="{_PROFILE_URL}">the rest of the portfolio</a> ·
   Data © GIOŚ, weather © Open-Meteo / CAMS (CC BY 4.0)
 </footer>
 </body>
