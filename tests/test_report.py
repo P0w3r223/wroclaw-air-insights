@@ -15,6 +15,7 @@ metadata key fails loudly instead of silently blanking the report to ``n/a``.
 import copy
 import re
 from datetime import datetime
+from importlib import resources
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -1294,8 +1295,8 @@ def test_interval_section_reads_the_article_off_the_number():
 
 
 # --- the page frame: headline tiles, jump list, one card per section ------------
-def test_stat_tiles_lead_with_the_figures_the_sections_below_argue_for():
-    tiles = report._stat_tiles(_fresh_metadata(), peak=18.5)
+def test_kpi_tiles_lead_with_the_figures_the_sections_below_argue_for():
+    tiles = report._kpi_tiles(_fresh_metadata(), peak=18.5)
     # Each tile has to agree with the section it summarises: the miss and its spread come
     # from cross-validation, the gain from the CV comparison, the hours from the split.
     assert "18.5 µg/m³" in tiles
@@ -1304,18 +1305,18 @@ def test_stat_tiles_lead_with_the_figures_the_sections_below_argue_for():
     assert "200" in tiles
 
 
-def test_stat_tiles_drop_a_figure_the_bundle_does_not_carry():
+def test_kpi_tiles_drop_a_figure_the_bundle_does_not_carry():
     """A gap is quieter than an n/a set in 1.4rem type — and this strip is read first."""
-    tiles = report._stat_tiles({}, peak=None)
+    tiles = report._kpi_tiles({}, peak=None)
     assert tiles == ""
 
 
-def test_stat_tiles_never_print_a_float_repr(leaks):
+def test_kpi_tiles_never_print_a_float_repr(leaks):
     unusable = _fresh_metadata(
         cross_validation={"mae_mean": float("nan"), "mae_std": None},
         mae_improvement_pct_cv=float("nan"),
     )
-    assert not leaks(report._stat_tiles(unusable, peak=float("nan")))
+    assert not leaks(report._kpi_tiles(unusable, peak=float("nan")))
 
 
 def test_contents_offers_only_sections_that_are_on_the_page():
@@ -1482,7 +1483,7 @@ def test_the_card_description_quotes_no_measurement_from_the_run_that_built_it()
     3. *match `f"{v:g}"` and `formatting.fmt(v)`, bounded* — narrower than this docstring,
        which claims to decide whether a number **this run produced** is quoted. The premise
        under it, *"every metric on this page is rendered through `formatting.fmt`"*, is
-       refuted by `report.py` in this repository: `_stat_tiles` writes `f"{n_test:,}"` and
+       refuted by `report.py` in this repository: `_kpi_tiles` writes `f"{n_test:,}"` and
        `f"{peak:.1f}"`, and `glossary_section` writes `f"{test_mean:.1f}"`. So `14.3`,
        `1,752` and `3.4` — the shapes a reader copying the page's own sentence would carry
        across — all passed.
@@ -1537,3 +1538,33 @@ def _is_the_same_figure(quoted: float, value: float) -> bool:
     against the format strings that produce them, so a fourth format needs no edit here.
     """
     return any(round(value, places) == quoted for places in (0, 1, 2)) or value == quoted
+
+
+def test_every_token_the_charts_paint_is_one_the_stylesheet_declares():
+    """The charts substitute token references into the SVG they emit, and nothing checked them.
+
+    `charts._THEMED` maps each literal matplotlib colour to a `var(--name)`, which lands in the
+    figure as a *presentation attribute* — `fill="var(--border)"`. The index checker's
+    `1 usage refs` reads CSS **rules**, so those references are outside every carrier there
+    was: S7 renamed `--ink` and `--line` in `page.css` and left three of them here pointing at
+    names that no longer existed, and the checker reported the page clean.
+
+    That was repaired by hand and by sweeping the tracked files. This is the guard, so the
+    next rename does not need either: it reads the names out of `_THEMED`'s own values and
+    the declarations out of the stylesheet, so neither side is a list anybody maintains.
+    """
+    referenced = {name
+                  for value in charts._THEMED.values()
+                  for name in re.findall(r"var\(\s*--([\w-]+)", value)}
+    assert referenced, "no token references in _THEMED — has it stopped theming?"
+
+    stylesheet = (resources.files("wroclaw_air_insights")
+                  .joinpath("assets/page.css").read_text("utf-8"))
+    declared = set(re.findall(r"--([\w-]+)\s*:", stylesheet))
+
+    missing = sorted(referenced - declared)
+    assert not missing, (
+        f"the charts paint {missing}, which `page.css` does not declare. A `var()` naming "
+        "nothing is discarded by CSS, so every mark drawn with it falls back to its initial "
+        "value — and this is the one place on the page where no clause of `0007` §5 can see it."
+    )

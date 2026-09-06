@@ -11,11 +11,13 @@
   color-scheme: light dark;
   --bg: #ffffff;
   --surface: #f6f8fa;
-  --line: #e3e7ee;
-  --ink: #1c2430;
+  --border: #e3e7ee;
+  --text: #1c2430;
   --muted: #5b6472;
   --accent: #2563eb;
-  --accent-soft: #dbe7ff;
+  --accent-soft: #5b93e4;
+  --positive: #047857;
+  --radius: 10px;
   --warn: #b45309;
   /* The per-lead specialist is a third estimator, not a shade of the model. */
   --specialist: #0f9d78;
@@ -25,11 +27,12 @@
   :root {
     --bg: #0f1319;
     --surface: #161c25;
-    --line: #263041;
-    --ink: #e6eaf2;
+    --border: #263041;
+    --text: #e6eaf2;
     --muted: #98a3b6;
     --accent: #6ea8fe;
-    --accent-soft: #1e2c45;
+    --accent-soft: #4167a6;
+    --positive: #34d399;
     --warn: #fbbf24;
     --specialist: #2dd4a7;
   }
@@ -46,7 +49,7 @@ body {
   margin: 0 auto;
   padding: 2.5rem 1.25rem 4rem;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--text);
   line-height: 1.6;
 }
 
@@ -80,7 +83,7 @@ h2 {
   letter-spacing: -0.01em;
   margin: 0 0 0.35rem;
   padding-top: 1.75rem;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
 }
 
 h3 { font-size: 1rem; margin: 1.5rem 0 0.25rem; }
@@ -106,8 +109,8 @@ section { margin: 2.25rem 0 0; scroll-margin-top: 3.5rem; }
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 1rem 1.2rem;
   margin: 1.25rem 0;
 }
@@ -123,21 +126,21 @@ section { margin: 2.25rem 0 0; scroll-margin-top: 3.5rem; }
   margin: 1.5rem 0;
 }
 
-.stat {
+.kpi {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 0.9rem 1rem;
 }
-.stat b {
+.kpi b {
   display: block;
   font-size: 1.55rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
-.stat .what { display: block; font-size: 0.85rem; font-weight: 600; margin-top: 0.1rem; }
-.stat .why { display: block; color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+.kpi .what { display: block; font-size: 0.85rem; font-weight: 600; margin-top: 0.1rem; }
+.kpi .why { display: block; color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
 
 /* --- Jump list: the page is long by design, so it says what is on it --- */
 nav.toc {
@@ -156,7 +159,7 @@ nav.toc a {
   text-decoration: none;
   font-size: 0.8rem;
   color: var(--muted);
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.2rem 0.7rem;
 }
@@ -168,7 +171,7 @@ nav.toc a:hover { color: var(--accent); border-color: var(--accent); }
 
 /* --- Tables --- */
 table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
-th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
 
 /* Not uppercased. A header reading "Typical width (µg/m³)" renders as "(MG/M³)" under
    text-transform — the micro sign upper-cases to a capital mu, which is indistinguishable
@@ -199,7 +202,7 @@ th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(
 
 .note {
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.75rem 0.9rem;
   margin-top: 1rem;
@@ -224,25 +227,25 @@ details.more > p { font-size: 0.9rem; color: var(--muted); margin: 0.5rem 0; }
 /* The glossary is a whole section behind one click, so its summary is that section's heading —
    sized like one, and carrying the rule every other section heading gets, rather than reading
    like a footnote a reader has to go looking for. */
-details.glossary { border-top: 1px solid var(--line); padding-top: 1.75rem; margin-top: 0; }
+details.glossary { border-top: 1px solid var(--border); padding-top: 1.75rem; margin-top: 0; }
 details.glossary > summary {
   font-size: 1.3rem;
   letter-spacing: -0.01em;
-  color: var(--ink);
+  color: var(--text);
   padding: 0;
 }
 details.glossary > summary::before { color: var(--accent); }
 
 dl { margin: 0.9rem 0 0; }
 dt { font-weight: 600; margin-top: 1.1rem; }
-dd { margin: 0.4rem 0 0; padding-left: 0.9rem; border-left: 2px solid var(--line); }
+dd { margin: 0.4rem 0 0; padding-left: 0.9rem; border-left: 2px solid var(--border); }
 dd p { margin: 0.4rem 0; }
 dl.rejected dd p { font-size: 0.93rem; }
 
 footer {
   margin-top: 3rem;
   padding-top: 1.25rem;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 0.85rem;
 }
