@@ -1482,6 +1482,13 @@ def test_the_card_description_quotes_no_measurement_from_the_run_that_built_it()
     *A second draft then matched those values as bare substrings, so `4` — a standard
     deviation — hit the `24` of "24-hour". Both drafts failed the same way: confident about a
     page that was conforming. The bound is what makes the third one a measurement.*
+
+    *And the third draft was **narrower than its own docstring**, which is the opposite
+    failure and the one that matters more. It compared against `f"{value:g}"` alone, while
+    every metric on this page is rendered through `formatting.fmt` — the MAE reads `3.00`,
+    not `3`, and the bound then refused to match inside it. So the single likeliest way a
+    figure reaches this description — someone lifting the page's own sentence — was the one
+    shape that passed. Both renderings are checked now. Found by review.*
     """
     metadata = _fresh_metadata()
     html = _page(metadata)
@@ -1493,12 +1500,17 @@ def test_the_card_description_quotes_no_measurement_from_the_run_that_built_it()
         assert match, f"no {key} to check"
         content = match.group(1)
         for value in measured:
-            rendered = f"{value:g}"
-            # Bounded, because a bare `"4" in content` matches the `24` of "24-hour" — the
-            # same overreach as the digit ban, one level down and just as confident.
-            bounded = re.compile(rf"(?<![\d.]){re.escape(rendered)}(?![\d.])")
-            assert not bounded.search(content), (
-                f"{key} quotes {rendered}, which this run measured. A cached card "
-                "description outlives the run, so a figure in one is a claim a later run "
-                "can contradict — which is what `_ABOUT` refuses for the page body."
-            )
+            for rendered in {f"{value:g}", formatting.fmt(value)}:
+                # Bounded on both sides, because a bare `"4" in content` matches the `24`
+                # of "24-hour" — the same overreach as the digit ban, one level down. The
+                # right-hand bound rejects a *continuing number*, not punctuation: a first
+                # attempt wrote `(?![\d.])`, which also rejected the full stop ending the
+                # sentence, so `its error of 3.00.` — the exact shape a copy from the page
+                # produces — slipped through the guard written to catch it.
+                bounded = re.compile(
+                    rf"(?<![\d.]){re.escape(rendered)}(?!\d)(?!\.\d)")
+                assert not bounded.search(content), (
+                    f"{key} quotes {rendered}, which this run measured. A cached card "
+                    "description outlives the run, so a figure in one is a claim a later run "
+                    "can contradict — which is what `_ABOUT` refuses for the page body."
+                )
