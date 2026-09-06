@@ -256,7 +256,7 @@ def _station_name(station_id: int) -> str:
 
 
 def _stat_tile(value: str, what: str, why: str) -> str:
-    return f"""  <div class="stat"><b>{value}</b><span class="what">{what}</span>
+    return f"""  <div class="kpi"><b>{value}</b><span class="what">{what}</span>
     <span class="why">{why}</span></div>
 """
 
