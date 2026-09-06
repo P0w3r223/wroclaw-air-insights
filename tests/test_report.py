@@ -15,6 +15,7 @@ metadata key fails loudly instead of silently blanking the report to ``n/a``.
 import copy
 import re
 from datetime import datetime
+from importlib import resources
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -1537,3 +1538,33 @@ def _is_the_same_figure(quoted: float, value: float) -> bool:
     against the format strings that produce them, so a fourth format needs no edit here.
     """
     return any(round(value, places) == quoted for places in (0, 1, 2)) or value == quoted
+
+
+def test_every_token_the_charts_paint_is_one_the_stylesheet_declares():
+    """The charts substitute token references into the SVG they emit, and nothing checked them.
+
+    `charts._THEMED` maps each literal matplotlib colour to a `var(--name)`, which lands in the
+    figure as a *presentation attribute* — `fill="var(--border)"`. The index checker's
+    `1 usage refs` reads CSS **rules**, so those references are outside every carrier there
+    was: S7 renamed `--ink` and `--line` in `page.css` and left three of them here pointing at
+    names that no longer existed, and the checker reported the page clean.
+
+    That was repaired by hand and by sweeping the tracked files. This is the guard, so the
+    next rename does not need either: it reads the names out of `_THEMED`'s own values and
+    the declarations out of the stylesheet, so neither side is a list anybody maintains.
+    """
+    referenced = {name
+                  for value in charts._THEMED.values()
+                  for name in re.findall(r"var\(\s*--([\w-]+)", value)}
+    assert referenced, "no token references in _THEMED — has it stopped theming?"
+
+    stylesheet = (resources.files("wroclaw_air_insights")
+                  .joinpath("assets/page.css").read_text("utf-8"))
+    declared = set(re.findall(r"--([\w-]+)\s*:", stylesheet))
+
+    missing = sorted(referenced - declared)
+    assert not missing, (
+        f"the charts paint {missing}, which `page.css` does not declare. A `var()` naming "
+        "nothing is discarded by CSS, so every mark drawn with it falls back to its initial "
+        "value — and this is the one place on the page where no clause of `0007` §5 can see it."
+    )
