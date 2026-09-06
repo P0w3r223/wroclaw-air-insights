@@ -26,6 +26,13 @@ on:
   #
   # Filtered to what actually changes the output: the package renders it, and this file
   # publishes it. A README or a test edit still waits for the data.
+  #
+  # **It is not filtered by cost, and there is no cheaper path.** Publishing runs `ingest
+  # --days 365` and `train` first, because the report is rendered from a trained bundle and
+  # nothing here can render it from the last one — so a push touching `src/**` pulls a year
+  # of GIOŚ and Open-Meteo data and retrains, about eleven minutes. That is the price of the
+  # page being a live artefact rather than a screenshot, and it is stated here so the filter
+  # is not later widened by someone who thinks this step is cheap.
   push:
     branches: [main]
     paths:
