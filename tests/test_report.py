@@ -1419,3 +1419,86 @@ def test_page_carries_the_badge_note_next_to_the_badge():
     html = _page(_fresh_metadata(), aqi=_AQI_NO_OVERALL)
     assert _badge(html) == "Bardzo dobry"
     assert "no overall index" in html
+
+
+# --------------------------------------------------------------------------------------
+# `0007` §5 clauses 5 and 6, this repository's half of `ADR-0004` K-c.
+#
+# The index checker in `current_projects` also reads these, but it can only read this page
+# by fetching the live URL — this repository commits no HTML, and `reports/site/` is a
+# gitignored local build that has been stale enough to produce a wrong answer that survived
+# a whole session. So the assertions that run on every push are the ones here.
+# --------------------------------------------------------------------------------------
+
+def test_the_page_carries_exactly_one_link_back_to_the_profile():
+    """Clause 6, and `0003` §7's shape: hub and spoke, one link, one string per repository.
+
+    **Exactly one, not at least one.** The clause fails on a second just as surely as on
+    none, because two back-links is the beginning of the mesh the shape was chosen over.
+    Counted by matching the href rather than by looking in the footer, so moving the link
+    somewhere better carries this check along instead of breaking it.
+    """
+    html = _page(_fresh_metadata())
+    hrefs = re.findall(r'<a[^>]+href="([^"]+)"', html)
+    profile = [href for href in hrefs
+               if href.rstrip("/").lower().endswith("github.com/p0w3r223")]
+    assert len(profile) == 1, (
+        f"clause 6 asks for one link back to the profile; this page has {len(profile)}: "
+        f"{profile}"
+    )
+
+
+def test_the_page_carries_its_card_metadata_and_a_favicon():
+    """Clause 5, named individually because `og:*` passes on any single tag.
+
+    `og:description` was the one this page lacked, and it lacked it for as long as the page
+    has existed — a link shared anywhere that renders a card showed the title and nothing
+    under it.
+    """
+    html = _page(_fresh_metadata())
+    present = set(re.findall(r'<meta[^>]+(?:name|property)="([^"]+)"', html))
+    for key in ("description", "og:type", "og:title", "og:description", "og:url",
+                "twitter:card"):
+        assert key in present, f"the page carries no {key}"
+    assert re.search(r'<link[^>]+rel="icon"', html), "no favicon"
+
+
+def test_the_card_description_quotes_no_measurement_from_the_run_that_built_it():
+    """This page's own rule, applied to the tags a reader sees before the page loads.
+
+    Every figure on this page is recomputed, so one pinned in a *standing* sentence is the
+    single claim a later run could contradict — the failure mode `_ABOUT` names and refuses.
+    A card description is standing text by definition: whoever renders the card caches it,
+    long after the run that emitted it.
+
+    **What this can decide, and what it deliberately cannot.** A first draft banned every
+    digit and went red on the shipped `description`, which says *"24-hour"* and *"PM2.5"* —
+    a horizon and a pollutant, neither of them a measurement. That assertion claimed a defect
+    the page does not have, which is the mirror of missing one. So the check is against the
+    **values this run measured**: an error, a baseline's error, a sample size. Whether a
+    number is a measurement or a name is not a question this file can answer in general, and
+    `0007` §7 is about exactly that class.
+
+    *A second draft then matched those values as bare substrings, so `4` — a standard
+    deviation — hit the `24` of "24-hour". Both drafts failed the same way: confident about a
+    page that was conforming. The bound is what makes the third one a measurement.*
+    """
+    metadata = _fresh_metadata()
+    html = _page(metadata)
+    measured = {metadata["model"]["mae"], metadata["model"]["rmse"],
+                metadata["baseline_persistence"]["mae"], metadata["n_train"],
+                metadata["n_test"], metadata["test_mean_pm25"]}
+    for key in ("description", "og:description"):
+        match = re.search(rf'<meta[^>]+(?:name|property)="{key}"[^>]+content="([^"]*)"', html)
+        assert match, f"no {key} to check"
+        content = match.group(1)
+        for value in measured:
+            rendered = f"{value:g}"
+            # Bounded, because a bare `"4" in content` matches the `24` of "24-hour" — the
+            # same overreach as the digit ban, one level down and just as confident.
+            bounded = re.compile(rf"(?<![\d.]){re.escape(rendered)}(?![\d.])")
+            assert not bounded.search(content), (
+                f"{key} quotes {rendered}, which this run measured. A cached card "
+                "description outlives the run, so a figure in one is a claim a later run "
+                "can contradict — which is what `_ABOUT` refuses for the page body."
+            )
