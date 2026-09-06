@@ -255,13 +255,13 @@ def _station_name(station_id: int) -> str:
     return next((s.name for s in config.STATIONS if s.id == station_id), f"station {station_id}")
 
 
-def _stat_tile(value: str, what: str, why: str) -> str:
+def _kpi_tile(value: str, what: str, why: str) -> str:
     return f"""  <div class="kpi"><b>{value}</b><span class="what">{what}</span>
     <span class="why">{why}</span></div>
 """
 
 
-def _stat_tiles(metadata: dict, peak: object) -> str:
+def _kpi_tiles(metadata: dict, peak: object) -> str:
     """The handful of figures a reader should leave with, before any of the argument.
 
     Every tile is computed from the same metadata the sections below print, so the strip
@@ -277,7 +277,7 @@ def _stat_tiles(metadata: dict, peak: object) -> str:
     tiles = []
     peak = _number(peak)
     if peak is not None:
-        tiles.append(_stat_tile(
+        tiles.append(_kpi_tile(
             f"{peak:.1f} µg/m³", "highest hour ahead",
             f"WHO 24 h guideline {config.PM25_WHO_DAILY:.0f} µg/m³",
         ))
@@ -293,17 +293,17 @@ def _stat_tiles(metadata: dict, peak: object) -> str:
             if std is not None
             else "year-round, on rolling folds"
         )
-        tiles.append(_stat_tile(f"{mae:.2f} µg/m³", "typical miss", spread))
+        tiles.append(_kpi_tile(f"{mae:.2f} µg/m³", "typical miss", spread))
 
     gain = _number(metadata.get("mae_improvement_pct_cv"))
     if gain is not None:
-        tiles.append(_stat_tile(
+        tiles.append(_kpi_tile(
             f"{gain:.1f}%", "smaller miss than the naive rule", "scored on those same folds",
         ))
 
     n_test = metadata.get("n_test")
     if isinstance(n_test, int):
-        tiles.append(_stat_tile(
+        tiles.append(_kpi_tile(
             f"{n_test:,}", "held-out hours scored", "never seen during training",
         ))
 
@@ -394,7 +394,7 @@ def _render_page(
         "rejected": _rejected_section(metadata),
         "glossary": glossary_section.render(metadata),
     }
-    stats = _stat_tiles(metadata, peak)
+    stats = _kpi_tiles(metadata, peak)
     contents = _contents(present)
     sections = _sections(present)
 
