@@ -2,7 +2,7 @@
 
 Date: 2026-08-20
 Status: accepted
-Author: P0w3r223
+Author: Piotr Cząstkiewicz
 Related to: [`ideas/0001_report_roadmap.md`](ideas/0001_report_roadmap.md),
 [`research/data-sources.md`](research/data-sources.md), the published report
 
