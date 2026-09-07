@@ -12,7 +12,7 @@ took, measured at a real phone viewport. Every numbered item is measured, shippe
 What is open now comes from the running system rather than from this plan: see **Next**, where
 item 16 — the gate on the rest — is settled as of 2026-08-14, and the log has since answered
 part of items 18 and 19 by itself.)
-Author: P0w3r223
+Author: Piotr Cząstkiewicz
 Related to: `src/wroclaw_air_insights/report.py`, `.github/workflows/refresh.yml`, PR #3
 
 ---
