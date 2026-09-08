@@ -374,7 +374,7 @@ def test_regime_section_shows_both_sides_of_the_guideline_with_their_hour_counts
     html = regime_section.render(_fresh_metadata(**_WITH_REGIME))
     assert "Below 15 µg/m³" in html
     assert "At or above 15 µg/m³" in html
-    assert "1,280 hours" in html
+    assert "1\u202f280 hours" in html
     assert "437 hours" in html
 
 
@@ -1517,17 +1517,22 @@ def test_the_card_description_quotes_no_measurement_from_the_run_that_built_it()
                 )
 
 
-#: A number in running prose, with optional thousands grouping. **Not preceded by a letter**,
+#: A number in running prose, grouped with a comma or U+202F, or not grouped at all. The
+#: page moved from the first to the second and this pattern read only the first, so a grouped
+#: figure in a card description would have parsed as two numbers and matched nothing --
+#: the guard below would have gone green on exactly the shape it exists to catch.
+#: **Not preceded by a letter**,
 #: which is what keeps `PM2.5` out: its `2.5` follows an `M` and is part of a name, not a
 #: measurement. A leading digit still counts, so "24-hour" yields 24 and is then compared on
 #: value rather than excluded by spelling.
-_NUMBER = re.compile(r"(?<![A-Za-z\d.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
+_NUMBER = re.compile(r"(?<![A-Za-z\d.])(\d{1,3}(?:[,\u202f]\d{3})+|\d+)(?:\.(\d+))?")
 
 
 def _numbers_in(text: str) -> list[float]:
     out = []
     for whole, frac in _NUMBER.findall(text):
-        out.append(float(whole.replace(",", "") + ("." + frac if frac else "")))
+        grouped = whole.replace(",", "").replace("\u202f", "")
+        out.append(float(grouped + ("." + frac if frac else "")))
     return out
 
 
@@ -1538,6 +1543,31 @@ def _is_the_same_figure(quoted: float, value: float) -> bool:
     against the format strings that produce them, so a fourth format needs no edit here.
     """
     return any(round(value, places) == quoted for places in (0, 1, 2)) or value == quoted
+
+
+def test_the_card_description_check_can_read_a_grouped_figure_at_all():
+    """The guard above parses numbers out of the description. This proves it parses a
+    **grouped** one, which nothing did.
+
+    Its fixture carries `n_train = 800` and `n_test = 200`, so no four-digit figure has ever
+    entered its `measured` set and `_NUMBER`'s grouping branch has never run under it. The
+    page does group -- `report.py` writes its hour counts through `formatting.thousands` --
+    so the guard could have been blind to every grouped figure a description might quote and
+    stayed green either way.
+
+    It was blind to the page's own spelling until this commit: `_NUMBER` matched a comma and
+    `_numbers_in` stripped a comma, and the page now writes U+202F. Both spellings are read
+    here, because the guard must survive a description written before the migration as well
+    as one written after it.
+    """
+    for grouped in ("1,280", "1\u202f280"):
+        quoted = _numbers_in(f"scored on {grouped} held-out hours")
+        assert quoted == [1280.0], f"{grouped!r} parsed as {quoted}"
+        assert _is_the_same_figure(quoted[0], 1280)
+
+    # A plain space between digits stays two numbers, deliberately: prose is full of them
+    # and this page writes none. Pinned so widening the class further is a decision.
+    assert _numbers_in("scored on 1 280 held-out hours") == [1.0, 280.0]
 
 
 def test_every_token_the_charts_paint_is_one_the_stylesheet_declares():
