@@ -17,12 +17,13 @@ from wroclaw_air_insights.forecast import baseline, model
 from wroclaw_air_insights.formatting import fmt as _fmt
 from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
 from wroclaw_air_insights.formatting import number as _number
+from wroclaw_air_insights.formatting import thousands as _thousands
 
 
 def render(metadata: dict) -> str:
     """The section as the page shows it: the framing, the headline, the table, the gain."""
     n_test = metadata.get("n_test")
-    tested_on = f" ({n_test:,} held-out hours)" if isinstance(n_test, int) else ""
+    tested_on = f" ({_thousands(n_test)} held-out hours)" if isinstance(n_test, int) else ""
     return f"""  <h2>How good is the forecast?</h2>
   <p>Always trained on earlier hours and scored on later ones{tested_on} — a chronological
   split, never a random one. The model serving the chart above uses these settings but is

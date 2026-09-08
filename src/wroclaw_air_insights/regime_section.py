@@ -17,12 +17,13 @@ from wroclaw_air_insights import config
 from wroclaw_air_insights.formatting import fmt as _fmt
 from wroclaw_air_insights.formatting import fmt_signed as _fmt_signed
 from wroclaw_air_insights.formatting import number as _number
+from wroclaw_air_insights.formatting import thousands as _thousands
 
 
 def _regime_row(label: str, model_regime: dict, naive_regime: dict) -> str:
     """One regime row: the model beside the naive rule, error and direction for each."""
     count = model_regime.get("n")
-    hours = f"{count:,} hours" if isinstance(count, int) else "—"
+    hours = f"{_thousands(count)} hours" if isinstance(count, int) else "—"
     return f"""    <tr>
       <td>{label}<br><span class="hint">{hours}</span></td>
       <td>{_fmt(model_regime.get('mae'))}</td>
@@ -43,7 +44,7 @@ def _detection_line(detection: dict, elevated: dict, threshold: float, naive: di
     naive_hit = _number((naive or {}).get("hit_rate"))
     against = f" (the naive rule: {100 * naive_hit:.0f}%)" if naive_hit is not None else ""
     total = elevated.get("n")
-    counted = f"{total:,} hours" if isinstance(total, int) else "the hours"
+    counted = f"{_thousands(total)} hours" if isinstance(total, int) else "the hours"
 
     cost = ""
     if false_alarm is not None:

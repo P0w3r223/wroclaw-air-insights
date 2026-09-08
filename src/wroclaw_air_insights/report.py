@@ -21,6 +21,7 @@ from wroclaw_air_insights import (
 )
 from wroclaw_air_insights.forecast import model, prospective, serving
 from wroclaw_air_insights.formatting import number as _number
+from wroclaw_air_insights.formatting import thousands as _thousands
 from wroclaw_air_insights.ingest import gios
 
 # The lead-axis section lives in its own module; the page still reaches it by the name every
@@ -245,7 +246,7 @@ def _backtest_section(metadata: dict) -> str:
     hours = len(stamps)
     return f"""  <h2>The last {span} of the test window, hour by hour</h2>
   <div class="chart-wrap">{chart}</div>
-  <p class="hint">{hours:,} hours the model had never seen — from the chronologically-trained
+  <p class="hint">{_thousands(hours)} hours the model had never seen — from the chronologically-trained
   model, not the one serving the chart at the top. That one is
   refitted on all available data, so plotting <em>its</em> fit over recent days would be
   showing it hours it learned from.</p>"""
@@ -304,7 +305,7 @@ def _kpi_tiles(metadata: dict, peak: object) -> str:
     n_test = metadata.get("n_test")
     if isinstance(n_test, int):
         tiles.append(_kpi_tile(
-            f"{n_test:,}", "held-out hours scored", "never seen during training",
+            _thousands(n_test), "held-out hours scored", "never seen during training",
         ))
 
     return f'<div class="stats">\n{"".join(tiles)}</div>' if tiles else ""
@@ -403,11 +404,11 @@ def _render_page(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wrocław Air Insights — live PM2.5 forecast</title>
+<title>Live 24-hour PM2.5 forecast — Wrocław Air Insights</title>
 <meta name="description" content="A live 24-hour PM2.5 forecast for Wrocław, rebuilt daily from
 GIOŚ measurements and Open-Meteo weather, with the error and the checks behind it.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Wrocław Air Insights — live PM2.5 forecast">
+<meta property="og:title" content="Live 24-hour PM2.5 forecast — Wrocław Air Insights">
 <!-- Figure-free, like every standing sentence on this page: a number here is one a later run
      could contradict, which is the failure mode this project keeps re-learning. It says what
      `description` does not — why the page can be trusted, rather than what it holds. -->
