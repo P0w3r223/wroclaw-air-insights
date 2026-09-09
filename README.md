@@ -12,7 +12,7 @@ branch and scored later against what actually happened.
 
 **Live report: <https://p0w3r223.github.io/wroclaw-air-insights/>**
 
-> Portfolio project A1 — data pipeline + time-series forecasting. Judged on methodological
+> Portfolio project — data pipeline + time-series forecasting. Judged on methodological
 > correctness rather than on model accuracy.
 
 ## What it does
